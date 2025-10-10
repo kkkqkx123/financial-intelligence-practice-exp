@@ -18,17 +18,11 @@
 │   ├── metrics/                   # 评估指标
 │   └── reports/                   # 实验报告
 ├── logs/                          # 日志文件
-│   ├── training/                  # 训练日志
-│   ├── evaluation/                # 评估日志
-│   └── experiments/               # 实验日志
 ├── src/                           # 源代码
 │   ├── data/                      # 数据处理模块
 │   ├── models/                    # 模型实现模块
 │   ├── utils/                     # 工具函数
 │   └── evaluation/                # 评估模块
-└── notebooks/                     # Jupyter笔记本
-    ├── experiments/               # 实验记录
-    └── analysis/                  # 分析结果
 ```
 
 ### 一、数据准备阶段
@@ -48,7 +42,6 @@
 **针对树模型（GBDT/LightGBM）：**
 - 可直接使用原始数值特征
 - 保留分箱特征作为类别特征
-- 考虑特征交互项的创建
 
 ### 二、模型设计与实现
 
@@ -69,40 +62,9 @@
    - 实现：lightgbm.LGBMClassifier
 
 #### 2.2 模型训练策略
-- **数据划分**：70%训练集，15%验证集，15%测试集
-- **交叉验证**：使用5折交叉验证调参
-- **超参数优化**：网格搜索（参数组合≤20个）
-
-#### 2.3 超参数搜索空间（网格优化）
-**逻辑回归（LR）：**
-```python
-param_grid_lr = {
-    'C': [0.1, 1, 10],                    # 正则化强度（3个值）
-    'penalty': ['l1', 'l2'],              # 正则化类型（2个值）
-    'solver': ['liblinear']               # 求解器（1个值）
-}
-# 总组合数：3 × 2 × 1 = 6个
-```
-
-**GBDT：**
-```python
-param_grid_gbdt = {
-    'n_estimators': [50, 100],            # 基学习器数量（2个值）
-    'learning_rate': [0.1, 0.3],          # 学习率（2个值）
-    'max_depth': [3, 5]                   # 最大深度（2个值）
-}
-# 总组合数：2 × 2 × 2 = 8个
-```
-
-**LightGBM：**
-```python
-param_grid_lgb = {
-    'n_estimators': [50, 100],             # 基学习器数量（2个值）
-    'learning_rate': [0.1, 0.3],           # 学习率（2个值）
-    'num_leaves': [15, 31]                 # 叶子节点数（2个值）
-}
-# 总组合数：2 × 2 × 2 = 8个
-```
+- **数据划分**：70%训练集，30%测试集
+- **模型训练**：使用默认参数训练模型
+- **性能评估**：计算AUC等评估指标
 
 ### 三、评估指标与结果分析
 
@@ -115,131 +77,44 @@ param_grid_lgb = {
 2. **手写逻辑回归**：理解算法原理
 3. **归一化影响分析**：研究不同模型对特征归一化的敏感性
 
-### 四、日志系统
+### 四、实施步骤
 
-#### 4.1 日志文件结构
-```
-logs/
-├── training/
-│   ├── lr_training_YYYYMMDD_HHMMSS.log     # 逻辑回归训练日志
-│   ├── gbdt_training_YYYYMMDD_HHMMSS.log   # GBDT训练日志
-│   └── lgb_training_YYYYMMDD_HHMMSS.log    # LightGBM训练日志
-├── evaluation/
-│   ├── lr_eval_YYYYMMDD_HHMMSS.log        # 逻辑回归评估日志
-│   ├── gbdt_eval_YYYYMMDD_HHMMSS.log      # GBDT评估日志
-│   └── lgb_eval_YYYYMMDD_HHMMSS.log       # LightGBM评估日志
-└── experiments/
-    ├── feature_engineering_YYYYMMDD_HHMMSS.log  # 特征工程日志
-    └── hyperparameter_YYYYMMDD_HHMMSS.log       # 超参数调优日志
-```
-
-#### 4.2 日志记录内容
-- **训练日志**：模型参数、训练时间、交叉验证结果、最佳参数
-- **评估日志**：评估指标、预测结果统计、模型性能对比
-- **实验日志**：特征工程步骤、参数搜索过程、实验结论
-
-#### 4.3 日志实现方式
-```python
-import logging
-import datetime
-
-def setup_logger(name, log_file):
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-    
-    # 文件处理器
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
-    
-    # 控制台处理器
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    
-    # 格式化器
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    
-    return logger
-```
-
-### 五、实施步骤
-
-#### 阶段一：基础模型实现（第1周）
+#### 基础模型实现
 1. 环境配置：安装sklearn、lightgbm等库
-2. 创建项目目录结构和日志系统
-3. 数据加载与预处理
-4. 实现基础LR和GBDT模型
-5. 基础AUC评估与日志记录
+2. 数据加载与预处理
+3. 实现LR、GBDT和LightGBM模型
+4. 计算AUC评估指标
+5. 保存测试集预测结果
 
-#### 阶段二：模型优化（第2周）
-1. 特征工程优化与日志记录
-2. 超参数调优（网格搜索）与日志记录
-3. LightGBM模型实现与日志记录
-4. 模型对比分析与结果汇总
+#### 可选功能实现
+1. 手写AUC函数实现与对比
+2. 手写逻辑回归实现
+3. 归一化影响分析
 
-#### 阶段三：高级功能（第3周，可选）
-1. 手写AUC函数实现
-2. 手写逻辑回归
-3. 归一化影响分析报告
+### 五、预期成果
 
-### 六、预期成果
+#### 必做内容
+- **模型文件**：保存训练好的模型
+- **预测结果**：测试集预测结果保存为CSV文件
+- **评估指标**：AUC等评估指标
+- **实验报告**：实验过程和结果分析
 
-#### 6.1 必做内容
-- **模型文件**：保存最优模型到对应目录（models/lr/, models/gbdt/, models/lightgbm/）
-- **预测结果**：测试集预测结果保存到 results/predictions/
-- **评估指标**：AUC等评估指标保存到 results/metrics/
-- **实验报告**：详细实验报告保存到 results/reports/
-- **日志文件**：完整的训练和评估日志保存到 logs/
-
-#### 6.2 可选内容
+#### 可选内容
 - 自定义AUC实现与对比
 - 自定义逻辑回归实现
 - 归一化技术分析报告
 
-### 七、文件管理规范
+### 六、技术要点
 
-#### 7.1 命名规范
-- **模型文件**：`{model_name}_best_model_{timestamp}.pkl`
-- **预测结果**：`{model_name}_predictions_{timestamp}.csv`
-- **评估指标**：`{model_name}_metrics_{timestamp}.json`
-- **日志文件**：`{type}_{model_name}_{timestamp}.log`
-
-#### 7.2 清理策略
-- 定期清理临时文件和中间结果
-- 保留最终模型和最佳结果
-- 日志文件保留最近30天
-
-### 八、技术要点
-
-#### 8.1 特征处理要点
+#### 特征处理要点
 - 基于特征相关性分析进行特征选择
 - 针对不同模型采用不同的特征预处理策略
 - 利用分箱特征提升模型表现
 
-#### 8.2 模型调优要点
-- 使用交叉验证避免过拟合
-- 针对不同模型特点设置合适的超参数搜索范围（组合数≤20）
-- 关注模型在验证集上的表现
-
-#### 8.3 日志管理要点
-- 统一日志格式和时间戳
-- 分离不同类型的日志（训练、评估、实验）
-- 定期清理过期日志文件
-- 关键步骤必须记录日志
-
-### 九、参考资料
-
-1. sklearn官方文档
-2. LightGBM官方文档
-3. 特征工程最佳实践
-4. 模型评估指标详解
-5. Python日志模块最佳实践
+#### 模型实现要点
+- 使用sklearn和lightgbm库实现模型
+- 关注模型在测试集上的表现
+- 保存预测结果用于提交
 
 ---
-*本方案基于数据集特征分析结果制定，优化了目录结构、参数搜索策略和日志系统，可根据实际实验进展进行调整。*
+*本方案基于实验要求制定，简化了模型训练流程，重点关注核心实验内容。*

@@ -1,3 +1,7 @@
 *.csv
 *.zip
 *.png
+*.log
+*.pyc
+*.pkl
+*.joblib
