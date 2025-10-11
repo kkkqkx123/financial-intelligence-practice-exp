@@ -44,23 +44,46 @@ def main():
     
     data_loader = DataLoader()
     
-    # 检查是否存在真实数据，如果没有则生成示例数据
-    data_path = 'data/processed_data.csv'
-    if os.path.exists(data_path):
-        print(f"加载真实数据: {data_path}")
-        X_train, X_test, y_train, y_test = data_loader.load_and_split_data(data_path)
-    else:
-        print("未找到真实数据，生成示例数据...")
-        # 生成数据并进行预处理
-        data_loader.load_data()
-        X_train, X_test, y_train, y_test = data_loader.preprocess_data()
-        
-        # 保存生成的数据
-        data_loader.save_preprocessed_data()
+    # 使用指定的真实数据文件
+    train_data_path = 'data/train_new.csv'
+    test_data_path = 'data/test_new.csv'
+    feature_info_path = 'data/feature_x.csv'
+    
+    print(f"加载训练数据: {train_data_path}")
+    print(f"加载测试数据: {test_data_path}")
+    print(f"加载特征信息: {feature_info_path}")
+    
+    # 加载训练数据
+    train_data = pd.read_csv(train_data_path)
+    test_data = pd.read_csv(test_data_path)
+    
+    # 分离特征和标签
+    X_train = train_data.drop(['Y', 'id'], axis=1)
+    y_train = train_data['Y']
+    X_test = test_data.drop(['id'], axis=1)  # 测试数据没有Y标签
+    
+    # 处理缺失值（用中位数填充数值特征）
+    X_train = X_train.fillna(X_train.median())
+    X_test = X_test.fillna(X_test.median())
     
     print(f"训练集大小: {X_train.shape}")
     print(f"测试集大小: {X_test.shape}")
     print(f"特征数量: {X_train.shape[1]}")
+    
+    # 保存预处理后的数据
+    os.makedirs('data/processed', exist_ok=True)
+    X_train.to_csv('data/processed/X_train_processed.csv', index=False)
+    X_test.to_csv('data/processed/X_test_processed.csv', index=False)
+    pd.DataFrame(y_train).to_csv('data/processed/y_train.csv', index=False)
+    
+    print("数据预处理完成，已保存到data/processed/目录")
+    
+    print(f"训练集大小: {X_train.shape}")
+    print(f"测试集大小: {X_test.shape}")
+    print(f"特征数量: {X_train.shape[1]}")
+    
+    # 保存测试数据引用用于后续预测
+    test_df = test_data.copy()
     
     # 步骤2: 基础模型训练
     print("\n" + "="*40)
@@ -75,172 +98,113 @@ def main():
     # 逻辑回归
     print("\n训练逻辑回归模型...")
     lr_model = model_trainer.train_logistic_regression(X_train, y_train)
-    lr_metrics = model_trainer.evaluate_model(lr_model, X_test, y_test, 'logistic_regression')
-    models['logistic_regression'] = {'model': lr_model, 'metrics': lr_metrics}
+    models['logistic_regression'] = {'model': lr_model}
     
     # GBDT
     print("\n训练GBDT模型...")
     gbdt_model = model_trainer.train_gbdt(X_train, y_train)
-    gbdt_metrics = model_trainer.evaluate_model(gbdt_model, X_test, y_test, 'gbdt')
-    models['gbdt'] = {'model': gbdt_model, 'metrics': gbdt_metrics}
+    models['gbdt'] = {'model': gbdt_model}
     
     # LightGBM
     print("\n训练LightGBM模型...")
     lgb_model = model_trainer.train_lightgbm(X_train, y_train)
     if lgb_model is not None:
-        lgb_metrics = model_trainer.evaluate_model(lgb_model, X_test, y_test, 'lightgbm')
-        models['lightgbm'] = {'model': lgb_model, 'metrics': lgb_metrics}
+        models['lightgbm'] = {'model': lgb_model}
     
     # 保存模型
     model_trainer.save_models()
     
-    # 步骤3: 模型评估和比较
+    # 步骤3: 生成测试集预测结果
     print("\n" + "="*40)
-    print("步骤3: 模型评估和比较")
+    print("步骤3: 生成测试集预测结果")
     print("="*40)
     
-    # 打印评估结果
-    results_df = pd.DataFrame({
-        'Model': ['Logistic Regression', 'GBDT', 'LightGBM'],
-        'AUC': [models['logistic_regression']['metrics']['auc'],
-                models['gbdt']['metrics']['auc'],
-                models['lightgbm']['metrics']['auc']],
-        'Accuracy': [models['logistic_regression']['metrics']['accuracy'],
-                     models['gbdt']['metrics']['accuracy'],
-                     models['lightgbm']['metrics']['accuracy']],
-        'Precision': [models['logistic_regression']['metrics']['precision'],
-                      models['gbdt']['metrics']['precision'],
-                      models['lightgbm']['metrics']['precision']],
-        'Recall': [models['logistic_regression']['metrics']['recall'],
-                   models['gbdt']['metrics']['recall'],
-                   models['lightgbm']['metrics']['recall']],
-        'F1-Score': [models['logistic_regression']['metrics']['f1_score'],
-                     models['gbdt']['metrics']['f1_score'],
-                     models['lightgbm']['metrics']['f1_score']]
-    })
+    # 为所有模型生成预测结果
+    for model_key, model_data in models.items():
+        model = model_data['model']
+        model_display_name = model_key.replace('_', ' ').title()
+        
+        # 生成预测概率
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = model.predict(X_test)
+        
+        # 保存预测结果
+        test_results = pd.DataFrame({
+            'id': test_df['id'],
+            'Predicted': y_pred,
+            'Probability': y_pred_proba
+        })
+        
+        # 为每个模型生成独立的预测文件
+        pred_filename = f"results/predictions/{model_key}_test_predictions.csv"
+        test_results.to_csv(pred_filename, index=False)
+        print(f"{model_display_name} 预测结果已保存到: {pred_filename}")
+        print(f"预测结果包含 {len(test_results)} 个样本")
     
-    print("\n模型评估结果:")
-    print(results_df.to_string(index=False))
-    
-    # 保存评估结果
-    results_df.to_csv('results/metrics/model_evaluation_results.csv', index=False)
-    
-    # 找出最佳模型
-    best_model_name = results_df.loc[results_df['AUC'].idxmax(), 'Model']
-    best_auc = results_df['AUC'].max()
-    print(f"\n最佳模型: {best_model_name} (AUC = {best_auc:.4f})")
-    
-    # 步骤4: 生成测试集预测结果
+    # 步骤4: 生成汇总预测文件
     print("\n" + "="*40)
-    print("步骤4: 生成测试集预测结果")
+    print("步骤4: 生成汇总预测文件")
     print("="*40)
     
-    # 使用最佳模型生成预测
-    best_model_key = best_model_name.lower().replace(' ', '_')
-    best_model = models[best_model_key]['model']
+    # 使用逻辑回归模型生成汇总预测结果（作为默认推荐）
+    lr_model = models['logistic_regression']['model']
+    y_pred_proba = lr_model.predict_proba(X_test)[:, 1]
+    y_pred = lr_model.predict(X_test)
     
-    # 生成预测概率
-    y_pred_proba = best_model.predict_proba(X_test)[:, 1]
-    y_pred = best_model.predict(X_test)
-    
-    # 保存预测结果
-    test_results = pd.DataFrame({
-        'Actual': y_test,
+    # 保存汇总预测结果
+    best_test_results = pd.DataFrame({
+        'id': test_df['id'],
         'Predicted': y_pred,
         'Probability': y_pred_proba
     })
     
-    test_results.to_csv('results/predictions/test_set_predictions.csv', index=False)
-    print(f"预测结果已保存到: results/predictions/test_set_predictions.csv")
-    print(f"预测结果包含 {len(test_results)} 个样本")
+    best_test_results.to_csv('results/predictions/best_model_test_predictions.csv', index=False)
+    print(f"\n逻辑回归模型预测结果已保存到: results/predictions/best_model_test_predictions.csv")
     
-    # 步骤5: 可选功能 - AUC实现对比
+    # 步骤5: 可选功能 - 交叉验证评估
     print("\n" + "="*40)
-    print("步骤5: 可选功能 - AUC实现对比")
+    print("步骤5: 可选功能 - 交叉验证评估")
     print("="*40)
     
-    print("\n对比sklearn AUC和手写AUC实现...")
-    auc_comparison = compare_auc_implementations(y_test, y_pred_proba)
-    
-    # 保存AUC对比结果
-    auc_comparison_df = pd.DataFrame([auc_comparison])
-    auc_comparison_df.to_csv('results/metrics/auc_comparison_results.csv', index=False)
-    
-    # 步骤6: 可选功能 - 手写逻辑回归
-    print("\n" + "="*40)
-    print("步骤6: 可选功能 - 手写逻辑回归")
-    print("="*40)
-    
-    print("\n训练手写逻辑回归模型...")
+    print("\n使用交叉验证评估模型性能...")
     try:
-        manual_weights, manual_bias, training_history = manual_logistic_regression(
-            X_train, y_train, learning_rate=0.01, max_iterations=1000
-        )
+        from sklearn.model_selection import cross_val_score, StratifiedKFold
+        from sklearn.metrics import roc_auc_score
         
-        # 生成预测
-        manual_proba, manual_pred = predict_manual_logistic_regression(
-            X_test, manual_weights, manual_bias
-        )
+        # 交叉验证评估
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         
-        # 计算手写模型的AUC
-        manual_auc = auc_comparison['manual_auc']  # 使用之前计算的AUC函数
+        cv_results = {}
+        for model_key, model_data in models.items():
+            model = model_data['model']
+            model_display_name = model_key.replace('_', ' ').title()
+            
+            # AUC交叉验证
+            auc_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring='roc_auc')
+            
+            cv_results[model_display_name] = {
+                'mean_auc': auc_scores.mean(),
+                'std_auc': auc_scores.std(),
+                'auc_scores': auc_scores.tolist()
+            }
+            
+            print(f"{model_display_name} - 交叉验证AUC: {auc_scores.mean():.4f} (+/- {auc_scores.std() * 2:.4f})")
         
-        print(f"手写逻辑回归 AUC: {manual_auc:.4f}")
-        
-        # 保存手写模型结果
-        manual_results = pd.DataFrame({
-            'Actual': y_test,
-            'Predicted': manual_pred,
-            'Probability': manual_proba
-        })
-        
-        manual_results.to_csv('results/predictions/manual_logistic_regression_predictions.csv', index=False)
-        print(f"手写模型预测结果已保存")
+        # 保存交叉验证结果
+        import json
+        cv_results_path = 'results/metrics/cross_validation_results.json'
+        with open(cv_results_path, 'w', encoding='utf-8') as f:
+            json.dump(cv_results, f, ensure_ascii=False, indent=2)
+        print(f"\n交叉验证结果已保存到: {cv_results_path}")
         
     except Exception as e:
-        print(f"手写逻辑回归训练失败: {str(e)}")
-    
-    # 步骤7: 可选功能 - 归一化分析
-    print("\n" + "="*40)
-    print("步骤7: 可选功能 - 归一化分析")
-    print("="*40)
-    
-    print("\n分析不同归一化方法对逻辑回归的影响...")
-    try:
-        def train_lr_model(X_train_norm, X_test_norm, y_train, y_test):
-            """用于归一化比较的简单LR训练函数"""
-            from sklearn.linear_model import LogisticRegression
-            lr = LogisticRegression(random_state=42)
-            lr.fit(X_train_norm, y_train)
-            y_pred_proba = lr.predict_proba(X_test_norm)[:, 1]
-            auc = auc_comparison['manual_auc']  # 使用手写AUC函数
-            return lr, auc
-        
-        norm_results, best_norm_method = compare_normalization_methods(
-            X_train, X_test, y_train, y_test, train_lr_model
-        )
-        
-        # 保存归一化分析结果
-        norm_summary = pd.DataFrame({
-            'Normalization_Method': ['No Normalization', 'Standardization', 'Min-Max Normalization'],
-            'AUC': [norm_results['no_normalization']['auc'],
-                   norm_results['standardization']['auc'],
-                   norm_results['minmax_normalization']['auc']]
-        })
-        
-        norm_summary.to_csv('results/metrics/normalization_comparison_results.csv', index=False)
-        print(f"归一化分析结果已保存")
-        
-    except Exception as e:
-        print(f"归一化分析失败: {str(e)}")
+        print(f"交叉验证评估失败: {str(e)}")
     
     # 最终总结
     print("\n" + "="*60)
     print("最终总结")
     print("="*60)
     print(f"实验完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"最佳模型: {best_model_name}")
-    print(f"最佳AUC: {best_auc:.4f}")
     print("\n生成的文件:")
     print("- 模型文件: models/目录下")
     print("- 预测结果: results/predictions/目录下")

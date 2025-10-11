@@ -5,3 +5,5 @@
 *.pyc
 *.pkl
 *.joblib
+*.docs
+*.rar
