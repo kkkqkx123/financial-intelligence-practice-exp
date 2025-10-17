@@ -1,0 +1,17 @@
+## 聚类算法实现
+1. clustering 文件夹下的 todo.py 文件部分：
+● 在 kmeans 函数下实现 k-means 或 k-medoids 算法
+● 在 spectral 函数下实现谱聚类算法
+2. clustering 文件夹下的 clustering.py 文件部分
+● 调试 knn_graph 的参数，优化谱聚类的效果
+● 运行 clustering.py 文件，保存两种算法的聚类结果，比较分析其不同
+
+## 分类算法实现
+1. classification 文件夹下 todo.py 文件部分：
+● 在 func 函数下实现线性回归（LR）、支持向量机（SVM）和感知机（Perceptron）三种分类算法的其中一种
+2. 在 classification 文件夹下 classification.py 文件部分：
+● 选择划分训练集和测试集的比例
+● 编写计算训练和测试错误率的代码
+● 保存分类结果，报告训练和测试错误率
+加分项：实现多个分类算法，比较分析其异同
+
