@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
 import numpy as np
 from gen_data import gen_data
 from plot import plot
 from todo import func, logistic_regression, perceptron
 import matplotlib.pyplot as plt
 import os
+import matplotlib as mpl
+
+# 设置中文字体，避免中文乱码
+mpl.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+mpl.rcParams['axes.unicode_minus'] = False
 
 no_iter = 1000  # 迭代次数
 no_train = 70  # 训练数据数量（70%用于训练）
@@ -75,7 +81,7 @@ results_dir = "classification_results"
 if not os.path.exists(results_dir):
     os.makedirs(results_dir)
 
-with open(os.path.join(results_dir, "classification_comparison.txt"), "w") as f:
+with open(os.path.join(results_dir, "classification_comparison.txt"), "w", encoding='utf-8') as f:
     f.write("分类算法比较结果\n")
     f.write("=" * 50 + "\n\n")
     for algo, (train_err, test_err) in results.items():
@@ -91,4 +97,9 @@ X_train, X_test = X[:, :no_train], X[:, no_train:]
 y_train, y_test = y[:, :no_train], y[:, no_train:]
 w_l = func(X_train, y_train)
 
+# 生成可视化并保存到当前目录
+plt.figure(figsize=(10, 8))
 plot(X, y, w_gt, w_l, "SVM分类结果")
+plt.savefig("SVM分类结果.png", dpi=300, bbox_inches="tight")
+plt.close()
+print("分类结果图已保存为: SVM分类结果.png")

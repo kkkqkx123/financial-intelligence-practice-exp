@@ -1,6 +1,0 @@
-Algorithm: spectral
-Data shape: (4078, 2)
-algorithm: spectral
-k: 2
-knn_k: 6
-threshold: 0.1

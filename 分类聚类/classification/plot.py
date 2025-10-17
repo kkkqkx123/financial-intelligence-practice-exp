@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+# 设置中文字体，避免中文乱码
+mpl.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+mpl.rcParams['axes.unicode_minus'] = False
 
 def plot(X, y, w_gt, w_l, title):
     '''
@@ -35,4 +41,4 @@ def plot(X, y, w_gt, w_l, title):
     temp_y = k * x + b
     plt.plot(x, temp_y, color='b', linewidth=2, linestyle='--')
     plt.title(title)
-    plt.show()
+    # 移除plt.show()，让调用者控制显示和保存
