@@ -15,7 +15,31 @@ def kmeans(X, k):
     idx = np.zeros(N)
     # YOUR CODE HERE
     # ----------------
-    pass
+    # 随机初始化聚类中心
+    np.random.seed(42)
+    centers = X[np.random.choice(N, k, replace=False)]
+    
+    max_iters = 100
+    for iter in range(max_iters):
+        # 分配每个点到最近的聚类中心
+        for i in range(N):
+            distances = np.linalg.norm(X[i] - centers, axis=1)
+            idx[i] = np.argmin(distances)
+        
+        # 更新聚类中心
+        new_centers = np.zeros((k, P))
+        for j in range(k):
+            points_in_cluster = X[idx == j]
+            if len(points_in_cluster) > 0:
+                new_centers[j] = np.mean(points_in_cluster, axis=0)
+            else:
+                new_centers[j] = centers[j]  # 保持原中心不变
+        
+        # 检查收敛
+        if np.allclose(centers, new_centers):
+            break
+        
+        centers = new_centers
     # ----------------
     return idx
 
@@ -32,10 +56,39 @@ def spectral(W, k):
     idx = np.zeros((N, 1))
     # YOUR CODE HERE
     # ----------------
-    pass
+    # 计算度矩阵D
+    row_sums = np.sum(W, axis=1)
+    
+    # 处理度为0的节点，避免除以零
+    row_sums = np.maximum(row_sums, 1e-10)  # 确保最小值为一个很小的正数
+    
+    D = np.diag(row_sums)
+    
+    # 计算拉普拉斯矩阵L
+    L = D - W
+    
+    # 计算归一化拉普拉斯矩阵L_sym
+    D_sqrt_inv = np.diag(1.0 / np.sqrt(row_sums))
+    L_sym = D_sqrt_inv @ L @ D_sqrt_inv
+    
+    # 计算特征值和特征向量
+    eigenvalues, eigenvectors = np.linalg.eigh(L_sym)
+    
+    # 选择前k个最小特征值对应的特征向量（跳过第一个为0的特征值）
+    # 对于连通图，第一个特征值应该接近0，对应的特征向量是常数向量
+    if k == 2:
+        # 对于2类聚类，使用前2个非零特征值对应的特征向量
+        X = eigenvectors[:, 1:k+1]  # 跳过第一个特征向量
+    else:
+        X = eigenvectors[:, :k]
+    
+    # 对特征向量进行归一化，处理零向量的情况
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-10)  # 避免除以零
+    X_normalized = X / norms
     # ----------------
-    X = X.astype(float)  # keep real part, discard imaginary part
-    idx = kmeans(X, k)
+    X_normalized = X_normalized.astype(float)  # keep real part, discard imaginary part
+    idx = kmeans(X_normalized, k)
     return idx
 
 def knn_graph(X, k, threshold):
