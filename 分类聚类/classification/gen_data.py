@@ -11,13 +11,13 @@ def nullspace(A, atol=1e-13, rtol=0):
 
 def gen_data(N, noisy=None):
     '''
-    Generate data set.
-    INPUT:  N:     number of samples.
-            noisy: if or not add noise to y.
+    生成数据集。
+    输入:  N:     样本数量。
+            noisy: 是否对y添加噪声。
     
-    OUTPUT: X: sample features, P-by-N matrix.
-            y: sample labels, 1-by-N row vector.
-            w: target function parameters, (P+1)-by-1 column vector.
+    输出: X: 样本特征, P-by-N 矩阵。
+          y: 样本标签, 1-by-N 行向量。
+          w: 目标函数参数, (P+1)-by-1 列向量。
     '''
     data_range = np.array([-1, 1])
     dim = 2

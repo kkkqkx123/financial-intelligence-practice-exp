@@ -91,22 +91,74 @@ def spectral(W, k):
     idx = kmeans(X_normalized, k)
     return idx
 
-def knn_graph(X, k, threshold):
+def knn_graph(X, k, threshold, method='euclidean'):
     '''
-    Construct W using KNN graph
+    Construct W using KNN graph with multiple similarity metrics
 
     Input:  X:data point features, N-by-P maxtirx.
             k: number of nearest neighbour.
             threshold: distance threshold.
+            method: similarity metric ('euclidean', 'radial', 'angle')
 
     Output:  W - adjacency matrix, N-by-N matrix.
     '''
     N = X.shape[0]
     W = np.zeros((N, N))
-    aj = cdist(X, X, 'euclidean')
-    for i in range(N):
-        index = np.argsort(aj[i])[:(k+1)]
-        W[i, index] = 1
-        W[i, i] = 0  # aj[i,i] = 0
-    W[aj >= threshold] = 0
+    
+    if method == 'euclidean':
+        # 原始欧氏距离方法
+        aj = cdist(X, X, 'euclidean')
+        for i in range(N):
+            index = np.argsort(aj[i])[:(k+1)]
+            W[i, index] = 1
+            W[i, i] = 0  # aj[i,i] = 0
+        W[aj >= threshold] = 0
+        
+    elif method == 'radial':
+        # 基于径向距离的相似度（适合同心圆数据）
+        # 计算每个点到原点的距离
+        radial_dist = np.sqrt(X[:, 0]**2 + X[:, 1]**2).reshape(-1, 1)
+        # 径向距离差异矩阵
+        radial_diff = np.abs(radial_dist - radial_dist.T)
+        # 角度相似度（使用余弦相似度）
+        norms = np.sqrt(X[:, 0]**2 + X[:, 1]**2)
+        norms = np.maximum(norms, 1e-10)  # 避免除以零
+        X_normalized = X / norms.reshape(-1, 1)
+        angle_sim = X_normalized @ X_normalized.T
+        
+        # 结合径向距离和角度相似度
+        for i in range(N):
+            # 找到径向距离相近的点
+            radial_neighbors = np.where(radial_diff[i] <= threshold * 0.3)[0]
+            # 在径向邻居中找到角度最相似的k个点
+            if len(radial_neighbors) > k:
+                angle_scores = angle_sim[i, radial_neighbors]
+                top_k_idx = np.argsort(angle_scores)[-k:]
+                neighbors = radial_neighbors[top_k_idx]
+            else:
+                neighbors = radial_neighbors
+            
+            W[i, neighbors] = 1
+            W[i, i] = 0
+            
+    elif method == 'angle':
+        # 基于角度的相似度
+        norms = np.sqrt(X[:, 0]**2 + X[:, 1]**2)
+        norms = np.maximum(norms, 1e-10)
+        X_normalized = X / norms.reshape(-1, 1)
+        # 计算角度相似度矩阵
+        angle_sim = X_normalized @ X_normalized.T
+        
+        for i in range(N):
+            # 找到角度最相似的k+1个点（包括自己）
+            similar_indices = np.argsort(angle_sim[i])[::-1][:(k+1)]
+            W[i, similar_indices] = 1
+            W[i, i] = 0
+            
+        # 应用阈值过滤
+        W[angle_sim < threshold] = 0
+        
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
     return W

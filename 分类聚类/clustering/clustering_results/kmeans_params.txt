@@ -1,0 +1,4 @@
+Algorithm: kmeans
+Data shape: (4078, 2)
+algorithm: kmeans
+k: 2

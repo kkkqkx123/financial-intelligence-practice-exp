@@ -101,11 +101,9 @@ def tune_spectral_parameters(X, k_range=None, threshold_range=None):
     
     # 限制搜索次数不超过8次
     if k_range is None:
-        k_range = [2, 4, 6]  # 3个k值
+        k_range = [50, 100, 200]  # 3个k值
     if threshold_range is None:
-        # threshold_range = [0.8, 1.4, 2.0]  # 3个阈值
-        # threshold_range = [0.2, 0.4, 0.6]  # 3个阈值
-        threshold_range = [0.1, 0.2, 0.4]  # 3个阈值
+        threshold_range = [0, 0.2, 0.4]  # 3个阈值
     
     best_params = {}
     best_score = -1

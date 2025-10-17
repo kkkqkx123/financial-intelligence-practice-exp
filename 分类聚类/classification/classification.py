@@ -5,24 +5,24 @@ from todo import func, logistic_regression, perceptron
 import matplotlib.pyplot as plt
 import os
 
-no_iter = 1000  # number of iteration
-no_train = 70  # number of training data (70% for training)
-no_test = 30   # number of testing data (30% for testing)
-no_data = 100  # number of all data
+no_iter = 1000  # 迭代次数
+no_train = 70  # 训练数据数量（70%用于训练）
+no_test = 30   # 测试数据数量（30%用于测试）
+no_data = 100  # 总数据数量
 assert(no_train + no_test == no_data)
 
 def compute_error(X, y, w):
-    """Compute classification error rate"""
+    """计算分类错误率"""
     X_bias = np.vstack((np.ones((1, X.shape[1])), X))
     predictions = np.sign(w.T @ X_bias)
-    # Handle case where prediction is 0
+    # 处理预测值为0的情况
     predictions[predictions == 0] = 1
     errors = np.sum(predictions.flatten() != y.flatten())
     return errors / y.shape[1]
 
 def run_classification_experiment(algorithm_name, algorithm_func):
-    """Run classification experiment with specified algorithm"""
-    print(f"\n=== Running {algorithm_name} ===")
+    """使用指定算法运行分类实验"""
+    print(f"\n=== 运行 {algorithm_name} ===")
     
     cumulative_train_err = 0
     cumulative_test_err = 0
@@ -32,10 +32,10 @@ def run_classification_experiment(algorithm_name, algorithm_func):
         X_train, X_test = X[:, :no_train], X[:, no_train:]
         y_train, y_test = y[:, :no_train], y[:, no_train:]
         
-        # Learn parameters
+        # 学习参数
         w_l = algorithm_func(X_train, y_train)
         
-        # Compute training and testing error
+        # 计算训练和测试错误率
         train_err = compute_error(X_train, y_train, w_l)
         test_err = compute_error(X_test, y_test, w_l)
         
@@ -45,50 +45,50 @@ def run_classification_experiment(algorithm_name, algorithm_func):
     avg_train_err = cumulative_train_err / no_iter
     avg_test_err = cumulative_test_err / no_iter
     
-    print(f"{algorithm_name} Results:")
-    print(f"Average Training error: {avg_train_err:.4f}")
-    print(f"Average Testing error: {avg_test_err:.4f}")
+    print(f"{algorithm_name} 结果:")
+    print(f"平均训练错误率: {avg_train_err:.4f}")
+    print(f"平均测试错误率: {avg_test_err:.4f}")
     
     return avg_train_err, avg_test_err
 
-# Run experiments with different algorithms
+# 使用不同算法运行实验
 results = {}
 
-# SVM (original func)
-results['SVM'] = run_classification_experiment('Support Vector Machine', func)
+# SVM（原始函数）
+results['SVM'] = run_classification_experiment('支持向量机', func)
 
-# Logistic Regression
-results['Logistic Regression'] = run_classification_experiment('Logistic Regression', logistic_regression)
+# 逻辑回归
+results['Logistic Regression'] = run_classification_experiment('逻辑回归', logistic_regression)
 
-# Perceptron
-results['Perceptron'] = run_classification_experiment('Perceptron', perceptron)
+# 感知器
+results['Perceptron'] = run_classification_experiment('感知器', perceptron)
 
-# Compare results
-print("\n=== Algorithm Comparison ===")
-print("Algorithm\t\tTrain Error\tTest Error")
+# 比较结果
+print("\n=== 算法比较 ===")
+print("算法\t\t训练错误率\t测试错误率")
 print("-" * 50)
 for algo, (train_err, test_err) in results.items():
     print(f"{algo:<20}\t{train_err:.4f}\t\t{test_err:.4f}")
 
-# Save results to file
+# 保存结果到文件
 results_dir = "classification_results"
 if not os.path.exists(results_dir):
     os.makedirs(results_dir)
 
 with open(os.path.join(results_dir, "classification_comparison.txt"), "w") as f:
-    f.write("Classification Algorithm Comparison Results\n")
+    f.write("分类算法比较结果\n")
     f.write("=" * 50 + "\n\n")
     for algo, (train_err, test_err) in results.items():
         f.write(f"{algo}:\n")
-        f.write(f"  Training Error: {train_err:.4f}\n")
-        f.write(f"  Testing Error: {test_err:.4f}\n\n")
+        f.write(f"  训练错误率: {train_err:.4f}\n")
+        f.write(f"  测试错误率: {test_err:.4f}\n\n")
 
-print(f"\nResults saved to {results_dir}/classification_comparison.txt")
+print(f"\n结果已保存到 {results_dir}/classification_comparison.txt")
 
-# Generate a final visualization with one of the algorithms
+# 使用其中一个算法生成最终可视化
 X, y, w_gt = gen_data(no_data)
 X_train, X_test = X[:, :no_train], X[:, no_train:]
 y_train, y_test = y[:, :no_train], y[:, no_train:]
 w_l = func(X_train, y_train)
 
-plot(X, y, w_gt, w_l, "SVM Classification Results")
+plot(X, y, w_gt, w_l, "SVM分类结果")

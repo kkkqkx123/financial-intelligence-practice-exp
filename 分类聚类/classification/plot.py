@@ -3,17 +3,17 @@ import matplotlib.pyplot as plt
 
 def plot(X, y, w_gt, w_l, title):
     '''
-    Plot data set.
+    绘制数据集。
 
-    Input:  X: sample features, P-by-N matrix.
-            y: sample labels, 1-by-N row vector.
-            w_gt: true target function parameters, (P+1)-by-1 column vector.
-            w_l: learnt target function parameters, (P+1)-by-1 column vector.
-            title: title of figure.
+    输入:  X: 样本特征, P-by-N 矩阵。
+            y: 样本标签, 1-by-N 行向量。
+            w_gt: 真实目标函数参数, (P+1)-by-1 列向量。
+            w_l: 学习得到的目标函数参数, (P+1)-by-1 列向量。
+            title: 图形标题。
     '''
 
     if X.shape[0] != 2:
-        print('Here we only support 2-d X data')
+        print('这里我们只支持二维X数据')
         return
 
     plt.plot(X[0, y.flatten() == 1], X[1, y.flatten() == 1], 'o', markerfacecolor='r', \
