@@ -1,0 +1,7 @@
+{
+  "ashare_sse300": {
+    "split_type": "3m",
+    "data_proxy_class": "SeriesTensorDataProxy",
+    "stock_num": 229
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "environment_keys_type": {
+  },
+
+  "series_keys_type": {
+    "ohlc": "tensor",
+    "history_price": "special"
+  }
+}

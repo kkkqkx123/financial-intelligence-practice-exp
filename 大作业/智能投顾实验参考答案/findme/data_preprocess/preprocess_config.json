@@ -1,0 +1,9 @@
+{
+  "your data name": {
+    "init_date": null,
+    "data_source_path": null,
+    "data_target_path": null,
+    "total_raw_seg": null,
+    "split_type": null
+  }
+}

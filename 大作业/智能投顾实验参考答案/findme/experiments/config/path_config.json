@@ -1,0 +1,11 @@
+{
+  "dataset": {
+    "local": "../../dataset/{}/tensor_data"
+  },
+  "metric": {
+    "local": "../../exp_result/"
+  },
+  "model": {
+    "local": "../../model/"
+  }
+}
