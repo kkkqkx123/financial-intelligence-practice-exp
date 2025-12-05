@@ -1,0 +1,16 @@
+**/*.csv
+**/*.zip
+**/*.png
+**/*.log
+**/*.pyc
+**/*.npy
+**/*.pkl
+*.joblib
+**/*.docx
+**/*.rar
+**/*.mat
+**/*.txt
+**/*.pdf
+**/*.rar
+**/*.pt
+**/*.json
