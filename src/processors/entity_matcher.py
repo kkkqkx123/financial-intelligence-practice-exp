@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Optional, Tuple, Set
 from collections import defaultdict
 from difflib import SequenceMatcher
-from .config import ROUND_MAPPING, AMOUNT_UNITS, CAPITAL_UNITS, CONFIDENCE_THRESHOLDS
+from .config import ROUND_MAPPING, CONFIDENCE_THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,8 @@ class EntityMatcher:
         
         # 使用缓存避免重复处理
         if name in self.name_normalization_cache:
-            return self.name_normalization_cache[name]
+            cached_result = self.name_normalization_cache[name]
+            return cached_result if isinstance(cached_result, str) else ""
         
         # 基础清理
         normalized = name.strip()
@@ -139,7 +140,15 @@ class EntityMatcher:
         # 使用缓存
         cache_key = f"{name}_{threshold}"
         if cache_key in self.fuzzy_match_cache:
-            return self.fuzzy_match_cache[cache_key]
+            cached_result = self.fuzzy_match_cache[cache_key]
+            if cached_result is None:
+                return None
+            # 确保缓存结果符合返回类型
+            if isinstance(cached_result, tuple) and len(cached_result) == 2:
+                match_str, score = cached_result
+                if isinstance(match_str, str) and isinstance(score, (int, float)):
+                    return (match_str, float(score))
+            return None
         
         normalized_name = self.normalize_name(name)
         best_match = None
@@ -161,7 +170,7 @@ class EntityMatcher:
         
         if best_match:
             self.entity_linking_stats['fuzzy_matches'] += 1
-            result = (best_match, best_score)
+            result = (best_match, float(best_score))
         else:
             result = None
         
@@ -247,7 +256,7 @@ class EntityMatcher:
         return self.match_entity(investor_name, known_investors, "investor")
     
     def batch_match_entities(self, entity_list: List[str], target_entities: Set[str], 
-                           entity_type: str = "company") -> List[Dict]:
+                           entity_type: str = "company") -> Dict:
         """批量匹配实体"""
         results = []
         llm_required_items = []

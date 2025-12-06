@@ -3,8 +3,9 @@ LLM客户端接口（预留）
 为后续LLM增强功能预留接口
 """
 
+import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, cast
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ class LLMClientInterface(ABC):
         pass
     
     @abstractmethod
-    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict:
+    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
         """解决实体冲突"""
         pass
     
@@ -62,7 +63,7 @@ class MockLLMClient(LLMClientInterface):
         
         return f"{entity_name}是一家专注于{context.get('industry', '未知领域')}的公司，成立于{context.get('establish_date', '未知时间')}。"
     
-    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict:
+    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
         """解决实体冲突（模拟实现）"""
         self.call_count += 1
         logger.info(f"[MOCK] 解决实体冲突: {len(conflicting_entities)} 个冲突")
@@ -76,7 +77,7 @@ class MockLLMClient(LLMClientInterface):
                 'merged_aliases': [e.get('name') for e in conflicting_entities if e != best_entity]
             }
         
-        return self.mock_responses['resolve_entity_conflicts']
+        return cast(Dict[str, Any], self.mock_responses['resolve_entity_conflicts'])
     
     def extract_relationships_from_text(self, text: str) -> List[Dict]:
         """从文本中提取关系（模拟实现）"""
@@ -144,12 +145,12 @@ class MockLLMClient(LLMClientInterface):
         
         return standardized
     
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, int]:
         """获取调用统计"""
-        return {
+        return cast(Dict[str, int], {
             'total_calls': self.call_count,
             'mock_responses': len(self.mock_responses)
-        }
+        })
 
 
 class LLMEnhancementTracker:
@@ -269,9 +270,9 @@ class LLMEnhancementTracker:
         else:
             raise ValueError(f"未知的请求类型: {request_type}")
     
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, int]:
         """获取统计信息"""
-        return self.stats.copy()
+        return cast(Dict[str, int], self.stats.copy())
     
     def export_pending_requests(self, filepath: str) -> None:
         """导出待处理请求"""

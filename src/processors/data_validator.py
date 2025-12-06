@@ -6,7 +6,7 @@
 import re
 import json
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple
 from datetime import datetime
 from collections import defaultdict, Counter
 
@@ -32,16 +32,16 @@ class DataValidator:
         """验证公司数据"""
         logger.info(f"开始验证公司数据，共 {len(companies)} 条记录")
         
-        validation_results = {
+        validation_results: Dict[str, Any] = {
             'total_records': len(companies),
-            'valid_records': 0,
-            'invalid_records': 0,
+            'valid_records': 0,  # type: ignore[assignment]
+            'invalid_records': 0,  # type: ignore[assignment]
             'field_statistics': {},
-            'validation_errors': [],
+            'validation_errors': [],  # type: ignore[assignment]
             'data_quality_score': 0.0
         }
         
-        field_stats = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
+        field_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
         
         for idx, company in enumerate(companies):
             record_valid = True
@@ -104,20 +104,20 @@ class DataValidator:
         """验证投资事件数据"""
         logger.info(f"开始验证投资事件数据，共 {len(events)} 条记录")
         
-        validation_results = {
+        validation_results: Dict[str, Any] = {
             'total_records': len(events),
-            'valid_records': 0,
-            'invalid_records': 0,
+            'valid_records': 0,  # type: ignore[assignment]
+            'invalid_records': 0,  # type: ignore[assignment]
             'field_statistics': {},
-            'validation_errors': [],
+            'validation_errors': [],  # type: ignore[assignment]
             'data_quality_score': 0.0,
             'amount_analysis': {},
             'round_analysis': {}
         }
         
-        field_stats = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
-        amount_patterns = Counter()
-        round_patterns = Counter()
+        field_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
+        amount_patterns: Counter[str] = Counter()
+        round_patterns: Counter[str] = Counter()
         
         for idx, event in enumerate(events):
             record_valid = True
@@ -178,16 +178,16 @@ class DataValidator:
         """验证投资方数据"""
         logger.info(f"开始验证投资方数据，共 {len(investors)} 条记录")
         
-        validation_results = {
+        validation_results: Dict[str, Any] = {
             'total_records': len(investors),
-            'valid_records': 0,
-            'invalid_records': 0,
+            'valid_records': 0,  # type: ignore[assignment]
+            'invalid_records': 0,  # type: ignore[assignment]
             'field_statistics': {},
-            'validation_errors': [],
+            'validation_errors': [],  # type: ignore[assignment]
             'data_quality_score': 0.0
         }
         
-        field_stats = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
+        field_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {'filled': 0, 'empty': 0, 'valid': 0, 'invalid': 0})
         
         for idx, investor in enumerate(investors):
             record_valid = True
@@ -242,12 +242,12 @@ class DataValidator:
         investors = kg_data.get('entities', {}).get('investors', {})
         relationships = kg_data.get('relationships', [])
         
-        validation_results = {
+        validation_results: Dict[str, Any] = {
             'entity_validation': {},
             'relationship_validation': {},
             'consistency_checks': {},
             'data_integrity': {},
-            'recommendations': []
+            'recommendations': []  # type: ignore[arg-type]
         }
         
         # 实体验证
@@ -263,7 +263,7 @@ class DataValidator:
         # 关系验证
         valid_relationships = 0
         orphaned_relationships = 0
-        relationship_types = Counter()
+        relationship_types: Counter[str] = Counter()
         
         for rel in relationships:
             if rel.get('investor_id') and rel.get('company_id'):
@@ -452,8 +452,8 @@ class DataValidator:
     
     def _check_date_consistency(self, relationships: List) -> Dict:
         """检查日期一致性"""
-        invalid_dates = []
-        future_dates = []
+        invalid_dates: List[str] = []
+        future_dates: List[str] = []
         
         for rel in relationships:
             date_str = rel.get('date', '')
@@ -474,18 +474,18 @@ class DataValidator:
     
     def _calculate_quality_score(self, validation_results: Dict) -> float:
         """计算数据质量分数"""
-        total_records = validation_results.get('total_records', 0)
-        valid_records = validation_results.get('valid_records', 0)
+        total_records: int = validation_results.get('total_records', 0)
+        valid_records: int = validation_results.get('valid_records', 0)
         
         if total_records == 0:
             return 0.0
         
         # 基础分数：有效记录比例
-        base_score = valid_records / total_records
+        base_score: float = valid_records / total_records
         
         # 字段完整性加分
-        field_stats = validation_results.get('field_statistics', {})
-        completeness_bonus = 0.0
+        field_stats: Dict = validation_results.get('field_statistics', {})
+        completeness_bonus: float = 0.0
         
         for field, stats in field_stats.items():
             if stats['filled'] > 0:
@@ -495,7 +495,7 @@ class DataValidator:
         # 限制加分上限
         completeness_bonus = min(completeness_bonus, 0.3)
         
-        final_score = base_score + completeness_bonus
+        final_score: float = base_score + completeness_bonus
         return min(final_score, 1.0)
     
     def get_validation_summary(self) -> Dict:

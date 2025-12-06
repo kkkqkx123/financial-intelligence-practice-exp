@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 
 try:
@@ -18,10 +18,14 @@ except ImportError:
     NEO4J_AVAILABLE = False
     logging.warning("py2neo库未安装，Neo4j功能将不可用")
 
-from src.processors.config import LOGGING_CONFIG
+from processors.config import LOGGING_CONFIG
 
 # 配置日志
-logging.basicConfig(**LOGGING_CONFIG)
+logging.basicConfig(
+    level=LOGGING_CONFIG.get('level', 'INFO'),
+    format=LOGGING_CONFIG.get('format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
+    datefmt=LOGGING_CONFIG.get('datefmt', '%Y-%m-%d %H:%M:%S')
+)
 logger = logging.getLogger(__name__)
 
 
@@ -39,8 +43,8 @@ class Neo4jKnowledgeGraphExporter:
     
     def __init__(self, config: Neo4jConfig):
         self.config = config
-        self.graph = None
-        self.node_matcher = None
+        self.graph: Optional[Graph] = None
+        self.node_matcher: Optional[NodeMatcher] = None
         self._connect()
     
     def _connect(self):
@@ -66,6 +70,9 @@ class Neo4jKnowledgeGraphExporter:
         
         logger.info(f"清除现有数据: {entity_types}")
         
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
+        
         try:
             for entity_type in entity_types:
                 query = f"MATCH (n:`{entity_type}`) DETACH DELETE n"
@@ -79,6 +86,9 @@ class Neo4jKnowledgeGraphExporter:
         """创建公司节点"""
         logger.info(f"开始创建公司节点: {len(companies)} 个")
         
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
+        
         created_count = 0
         
         try:
@@ -89,7 +99,7 @@ class Neo4jKnowledgeGraphExporter:
                     公司ID=company_id
                 ).first()
                 
-                if existing:
+                if existing is not None:
                     logger.debug(f"公司已存在，跳过: {company_data.get('name', company_id)}")
                     continue
                 
@@ -135,6 +145,9 @@ class Neo4jKnowledgeGraphExporter:
         """创建投资方节点"""
         logger.info(f"开始创建投资方节点: {len(investors)} 个")
         
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
+        
         created_count = 0
         
         try:
@@ -145,7 +158,7 @@ class Neo4jKnowledgeGraphExporter:
                     投资方ID=investor_id
                 ).first()
                 
-                if existing:
+                if existing is not None:
                     logger.debug(f"投资方已存在，跳过: {investor_data.get('name', investor_id)}")
                     continue
                 
@@ -191,6 +204,9 @@ class Neo4jKnowledgeGraphExporter:
         """创建行业节点"""
         logger.info(f"开始创建行业节点: {len(industries)} 个")
         
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
+        
         created_count = 0
         
         try:
@@ -229,6 +245,9 @@ class Neo4jKnowledgeGraphExporter:
     def create_investment_relationships(self, relationships: List[Dict]) -> int:
         """创建投资关系"""
         logger.info(f"开始创建投资关系: {len(relationships)} 个")
+        
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
         
         created_count = 0
         
@@ -289,7 +308,10 @@ class Neo4jKnowledgeGraphExporter:
     
     def create_industry_relationships(self, companies: Dict[str, Dict]) -> int:
         """创建行业关系"""
-        logger.info("开始创建行业关系")
+        logger.info(f"开始创建行业关系: {len(companies)} 个")
+        
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
         
         created_count = 0
         
@@ -311,7 +333,7 @@ class Neo4jKnowledgeGraphExporter:
                     行业名称=industry
                 ).first()
                 
-                if not company_node or not industry_node:
+                if company_node is None or industry_node is None:
                     logger.warning(f"找不到对应的节点 - 公司: {company_id}, 行业: {industry}")
                     continue
                 
@@ -340,67 +362,59 @@ class Neo4jKnowledgeGraphExporter:
             logger.error(f"创建行业关系失败: {e}")
             raise
     
-    def export_knowledge_graph(self, kg_data: Dict, clear_existing: bool = True) -> Dict[str, int]:
+    def export_knowledge_graph(self, kg_data: Dict, clear_existing: bool = True) -> Dict[str, Any]:
         """导出知识图谱到Neo4j"""
         logger.info("开始导出知识图谱到Neo4j")
         
         start_time = datetime.now()
-        export_stats = {}
+        export_stats: Dict[str, Union[int, float]] = {}
         
-        try:
-            companies = kg_data.get('companies', {})
-            investors = kg_data.get('investors', {})
-            relationships = kg_data.get('relationships', [])
-            
-            # 清除现有数据（可选）
-            if clear_existing:
-                self.clear_existing_data()
-            
-            # 创建实体节点
-            export_stats['companies_created'] = self.create_company_nodes(companies)
-            export_stats['investors_created'] = self.create_investor_nodes(investors)
-            
-            # 提取行业信息并创建行业节点
-            industries = set()
-            for company in companies.values():
-                industry = company.get('industry')
-                if industry:
-                    industries.add(industry)
-            
-            export_stats['industries_created'] = self.create_industry_nodes(list(industries))
-            
-            # 创建关系
-            export_stats['investment_relationships_created'] = self.create_investment_relationships(relationships)
-            export_stats['industry_relationships_created'] = self.create_industry_relationships(companies)
-            
-            # 计算总耗时
-            end_time = datetime.now()
-            export_stats['export_duration'] = (end_time - start_time).total_seconds()
-            export_stats['total_entities'] = (
-                export_stats['companies_created'] + 
-                export_stats['investors_created'] + 
-                export_stats['industries_created']
-            )
-            export_stats['total_relationships'] = (
-                export_stats['investment_relationships_created'] + 
-                export_stats['industry_relationships_created']
-            )
-            
-            logger.info("知识图谱导出完成")
-            logger.info(f"导出统计: {export_stats}")
-            
-            return export_stats
-            
-        except Exception as e:
-            logger.error(f"导出知识图谱失败: {e}")
-            raise
+        companies = kg_data.get('companies', {})
+        investors = kg_data.get('investors', {})
+        relationships = kg_data.get('relationships', [])
+        
+        # 清除现有数据（可选）
+        if clear_existing:
+            self.clear_existing_data()
+        
+        # 创建实体节点
+        export_stats['companies_created'] = self.create_company_nodes(companies)
+        export_stats['investors_created'] = self.create_investor_nodes(investors)
+        
+        # 提取行业信息并创建行业节点
+        industries = set()
+        for company in companies.values():
+            industry = company.get('industry')
+            if industry:
+                industries.add(industry)
+        
+        export_stats['industries_created'] = self.create_industry_nodes(list(industries))
+        
+        # 创建关系
+        export_stats['investment_relationships_created'] = self.create_investment_relationships(relationships)
+        export_stats['industry_relationships_created'] = self.create_industry_relationships(companies)
+        
+        # 计算总耗时
+        end_time = datetime.now()
+        export_stats['export_duration'] = (end_time - start_time).total_seconds()
+        export_stats['total_entities'] = int(
+            export_stats['companies_created'] + 
+            export_stats['investors_created'] + 
+            export_stats['industries_created']
+        )
+        export_stats['total_relationships'] = int(
+            export_stats['investment_relationships_created'] + 
+            export_stats['industry_relationships_created']
+        )
+        
+        logger.info("知识图谱导出完成")
+        logger.info(f"导出统计: {export_stats}")
+        
+        return export_stats
     
     def get_export_statistics(self) -> Dict[str, Any]:
         """获取导出统计信息"""
-        if not self.graph:
-            return {}
-        
-        try:
+        if self.graph and self.node_matcher:
             # 实体统计
             company_count = len(list(self.node_matcher.match("公司")))
             investor_count = len(list(self.node_matcher.match("投资方")))
@@ -424,10 +438,8 @@ class Neo4jKnowledgeGraphExporter:
                 'relationships': relationships,
                 'connection_status': 'connected'
             }
-            
-        except Exception as e:
-            logger.error(f"获取统计信息失败: {e}")
-            return {'connection_status': 'error', 'error': str(e)}
+        else:
+            return {'connection_status': 'not_connected', 'error': 'Graph not available'}
     
     def close(self):
         """关闭连接"""
@@ -441,7 +453,7 @@ class KnowledgeGraphIntegrationManager:
     
     def __init__(self, neo4j_config: Optional[Neo4jConfig] = None):
         self.neo4j_config = neo4j_config or Neo4jConfig()
-        self.exporter = None
+        self.exporter: Optional[Neo4jKnowledgeGraphExporter] = None
         self._initialize_exporter()
     
     def _initialize_exporter(self):
@@ -459,14 +471,7 @@ class KnowledgeGraphIntegrationManager:
     
     def integrate_with_neo4j(self, kg_data: Dict, clear_existing: bool = True) -> Dict:
         """集成知识图谱到Neo4j"""
-        if not self.exporter:
-            return {
-                'success': False,
-                'error': 'Neo4j导出器不可用',
-                'recommendation': '请安装py2neo库并配置Neo4j连接'
-            }
-        
-        try:
+        if self.exporter:
             # 导出知识图谱
             export_stats = self.exporter.export_knowledge_graph(kg_data, clear_existing)
             
@@ -479,37 +484,27 @@ class KnowledgeGraphIntegrationManager:
                 'current_statistics': statistics,
                 'neo4j_available': True
             }
-            
-        except Exception as e:
-            error_msg = f"集成到Neo4j失败: {str(e)}"
-            logger.error(error_msg)
+        else:
             return {
                 'success': False,
-                'error': error_msg,
-                'neo4j_available': False
+                'error': 'Neo4j导出器不可用',
+                'recommendation': '请安装py2neo库并配置Neo4j连接'
             }
     
     def get_integration_status(self) -> Dict:
         """获取集成状态"""
-        if not self.exporter:
-            return {
-                'neo4j_available': False,
-                'connection_status': 'not_configured',
-                'recommendation': '请安装py2neo库并配置Neo4j连接'
-            }
-        
-        try:
+        if self.exporter:
             statistics = self.exporter.get_export_statistics()
             return {
                 'neo4j_available': True,
                 'connection_status': statistics.get('connection_status', 'unknown'),
                 'statistics': statistics
             }
-        except Exception as e:
+        else:
             return {
-                'neo4j_available': True,
-                'connection_status': 'error',
-                'error': str(e)
+                'neo4j_available': False,
+                'connection_status': 'not_configured',
+                'recommendation': '请安装py2neo库并配置Neo4j连接'
             }
     
     def close(self):

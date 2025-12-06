@@ -5,7 +5,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 from datetime import datetime
 from collections import defaultdict
 
@@ -20,8 +20,8 @@ class HybridKGBuilder:
     """混合式知识图谱构建器"""
     
     def __init__(self):
-        self.parser = DataParser()
-        self.matcher = EntityMatcher()
+        self.parser: DataParser = DataParser()
+        self.matcher: EntityMatcher = EntityMatcher()
         
         # 知识图谱存储
         self.companies = {}  # 公司实体
@@ -30,8 +30,8 @@ class HybridKGBuilder:
         self.relationships = []  # 关系数据
         
         # LLM增强记录
-        self.llm_enhancement_queue = []  # 需要LLM增强的项目队列
-        self.llm_results_cache = {}  # LLM结果缓存
+        self.llm_enhancement_queue: List[Dict[str, Any]] = []  # 需要LLM增强的项目队列
+        self.llm_results_cache: Dict[str, Any] = {}  # LLM结果缓存
         
         # 统计信息
         self.build_stats = {
@@ -192,7 +192,7 @@ class HybridKGBuilder:
                         company_names, investor_names
                     )
                     
-                    if relationship:
+                    if relationship is not None:
                         relationships.append(relationship)
                 
             except Exception as e:
@@ -204,7 +204,7 @@ class HybridKGBuilder:
         return relationships
     
     def _create_investment_relationship(self, investor_name: str, company_name: str,
-                                       amount_info: Dict, round_info: Dict, investment_date: str,
+                                       amount_info: Dict, round_info: Dict, investment_date: Optional[str],
                                        companies: Dict[str, Dict], investors: Dict[str, Dict],
                                        company_names: Set[str], investor_names: Set[str]) -> Optional[Dict]:
         """创建单个投资关系"""
@@ -403,7 +403,7 @@ class HybridKGBuilder:
         # 使用智能分割
         return self.parser._smart_split(investor_names_str)
     
-    def _parse_investment_amount(self, amount_str: str) -> Dict:
+    def _parse_investment_amount(self, amount_str: str) -> Dict[str, Any]:
         """解析投资金额"""
         if not amount_str or amount_str == '未披露':
             return {
@@ -417,14 +417,14 @@ class HybridKGBuilder:
         normalized_amount = self.parser._normalize_amount(amount_str)
         
         return {
-            'amount': normalized_amount.get('amount'),
-            'currency': normalized_amount.get('currency', 'unknown'),
-            'unit': normalized_amount.get('unit', 'unknown'),
+            'amount': normalized_amount.get('amount') if isinstance(normalized_amount, dict) else normalized_amount,
+            'currency': normalized_amount.get('currency', 'unknown') if isinstance(normalized_amount, dict) else 'unknown',
+            'unit': normalized_amount.get('unit', 'unknown') if isinstance(normalized_amount, dict) else 'unknown',
             'original': amount_str,
-            'confidence': 0.8 if normalized_amount.get('amount') else 0.3
+            'confidence': 0.8 if (normalized_amount.get('amount') if isinstance(normalized_amount, dict) else normalized_amount) else 0.3
         }
     
-    def _standardize_round(self, round_str: str) -> Dict:
+    def _standardize_round(self, round_str: str) -> Dict[str, Any]:
         """标准化投资轮次"""
         if not round_str:
             return {'round': 'unknown', 'confidence': 0.3}
@@ -472,7 +472,7 @@ class HybridKGBuilder:
         
         return min(confidence, 1.0)
     
-    def get_llm_enhancement_batch(self) -> List[Dict]:
+    def get_llm_enhancement_batch(self) -> List[Dict[str, Any]]:
         """获取需要LLM增强的批处理任务"""
         return self.llm_enhancement_queue.copy()
     

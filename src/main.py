@@ -11,7 +11,7 @@ import logging
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
@@ -27,7 +27,10 @@ except ImportError:
     NEO4J_INTEGRATION_AVAILABLE = False
 
 # 配置日志
-logging.basicConfig(**LOGGING_CONFIG)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +38,7 @@ class KnowledgeGraphPipeline:
     """知识图谱构建流水线"""
     
     def __init__(self, data_dir: str = "dataset", output_dir: str = "output", 
-                 enable_neo4j: bool = False, neo4j_config: Optional[Dict] = None):
+                 enable_neo4j: bool = False, neo4j_config: Optional[Dict[str, Any]] = None):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.parser = DataParser()
@@ -45,7 +48,7 @@ class KnowledgeGraphPipeline:
         
         # Neo4j集成
         self.enable_neo4j = enable_neo4j and NEO4J_INTEGRATION_AVAILABLE
-        self.neo4j_manager = None
+        self.neo4j_manager: Optional[KnowledgeGraphIntegrationManager] = None
         if self.enable_neo4j:
             neo4j_config_obj = Neo4jConfig(**(neo4j_config or {}))
             self.neo4j_manager = KnowledgeGraphIntegrationManager(neo4j_config_obj)
@@ -55,7 +58,7 @@ class KnowledgeGraphPipeline:
         self.output_dir.mkdir(exist_ok=True)
         
         # 统计数据
-        self.pipeline_stats = {
+        self.pipeline_stats: Dict[str, Any] = {
             'start_time': None,
             'end_time': None,
             'total_processing_time': 0,
@@ -72,7 +75,7 @@ class KnowledgeGraphPipeline:
             'investors': 'investment_structure.md'
         }
         
-        loaded_data = {}
+        loaded_data: Dict[str, List[Dict]] = {}
         
         for data_type, filename in data_files.items():
             file_path = self.data_dir / filename
@@ -122,7 +125,8 @@ class KnowledgeGraphPipeline:
             return []
         
         # 解析CSV数据
-        return self.parser.parse_csv_data('\n'.join(csv_lines))
+        csv_content = '\n'.join(csv_lines)
+        return self.parser.parse_csv_data(csv_content)
     
     def _extract_table_from_md(self, content: str) -> List[str]:
         """从Markdown中提取表格数据"""
@@ -279,13 +283,12 @@ class KnowledgeGraphPipeline:
     
     def _perform_quality_checks(self, kg_data: Dict) -> Dict:
         """执行质量检查"""
-        quality_report = {
+        quality_report: Dict[str, Any] = {
             'entity_coverage': {},
             'data_completeness': {},
             'relationship_validation': {},
             'recommendations': []
         }
-        
         companies = kg_data.get('companies', {})
         investors = kg_data.get('investors', {})
         relationships = kg_data.get('relationships', [])
@@ -393,16 +396,16 @@ class KnowledgeGraphPipeline:
         
         try:
             # 导出知识图谱数据
-            export_result = self.neo4j_manager.export_knowledge_graph(kg_data)
+            export_result = self.neo4j_manager.integrate_with_neo4j(kg_data)
             
             # 获取统计信息
-            stats = self.neo4j_manager.get_knowledge_graph_stats()
+            stats = self.neo4j_manager.get_integration_status()
             
             return {
-                "success": True,
+                "success": export_result.get("success", False),
                 "export_result": export_result,
                 "statistics": stats,
-                "message": "知识图谱已成功导出到Neo4j"
+                "message": "知识图谱已成功导出到Neo4j" if export_result.get("success") else "知识图谱导出到Neo4j失败"
             }
         except Exception as e:
             logger.error(f"Neo4j导出失败: {str(e)}")
@@ -412,44 +415,48 @@ class KnowledgeGraphPipeline:
                 "message": "知识图谱导出到Neo4j失败"
             }
     
-    def run_full_pipeline(self, save_intermediate: bool = True) -> Dict:
+    def run_full_pipeline(self, save_intermediate: bool = True) -> Dict[str, Any]:
         """运行完整的知识图谱构建流水线"""
         logger.info("开始运行完整的知识图谱构建流水线")
         self.pipeline_stats['start_time'] = datetime.now().isoformat()
         
+        # 初始化neo4j_results
+        neo4j_results: Optional[Dict[str, Any]] = None
+        
         try:
             # 阶段1: 数据加载
             logger.info("=== 阶段1: 数据加载 ===")
-            raw_data = self.load_data_files()
+            raw_data: Dict[str, List[Dict]] = self.load_data_files()
             
             if save_intermediate:
                 self.save_intermediate_results(raw_data, "raw_data")
             
             # 阶段2: 数据解析
             logger.info("=== 阶段2: 数据解析 ===")
-            parsed_data = self.run_data_parsing_stage(raw_data)
+            parsed_data: Dict[str, List[Dict]] = self.run_data_parsing_stage(raw_data)
             
             if save_intermediate:
                 self.save_intermediate_results(parsed_data, "parsed_data")
             
             # 阶段3: 实体构建
             logger.info("=== 阶段3: 实体构建 ===")
-            kg_data = self.run_entity_building_stage(parsed_data)
+            kg_data: Dict[str, Any] = self.run_entity_building_stage(parsed_data)
             
             if save_intermediate:
                 self.save_intermediate_results(kg_data, "knowledge_graph")
             
             # 阶段4: 质量检查
             logger.info("=== 阶段4: 质量检查 ===")
-            quality_report = self.run_quality_check_stage(kg_data)
+            quality_report: Dict[str, Any] = self.run_quality_check_stage(kg_data)
             
             # 保存最终结果
             self.save_final_results(kg_data, quality_report)
             
             # 更新流水线统计
             self.pipeline_stats['end_time'] = datetime.now().isoformat()
-            total_time = (datetime.fromisoformat(self.pipeline_stats['end_time']) - 
-                         datetime.fromisoformat(self.pipeline_stats['start_time'])).total_seconds()
+            start_time = datetime.fromisoformat(self.pipeline_stats['start_time'])
+            end_time = datetime.fromisoformat(self.pipeline_stats['end_time'])
+            total_time: float = (end_time - start_time).total_seconds()
             self.pipeline_stats['total_processing_time'] = total_time
             
             logger.info(f"知识图谱构建完成！总耗时: {total_time:.2f}秒")
@@ -460,13 +467,14 @@ class KnowledgeGraphPipeline:
                 neo4j_results = self.export_to_neo4j(kg_data)
                 logger.info(f"Neo4j导出完成: {neo4j_results}")
             
+            llm_enhancement_batch = self.builder.get_llm_enhancement_batch()
             return {
                 'success': True,
                 'knowledge_graph': kg_data,
                 'quality_report': quality_report,
                 'statistics': self.pipeline_stats,
-                'llm_enhancement_required': len(self.builder.get_llm_enhancement_batch()),
-                'neo4j_results': neo4j_results if self.enable_neo4j else None
+                'llm_enhancement_required': len(llm_enhancement_batch) if llm_enhancement_batch else 0,
+                'neo4j_results': neo4j_results
             }
             
         except Exception as e:
@@ -476,7 +484,8 @@ class KnowledgeGraphPipeline:
             return {
                 'success': False,
                 'error': str(e),
-                'statistics': self.pipeline_stats
+                'statistics': self.pipeline_stats,
+                'neo4j_results': neo4j_results
             }
 
 

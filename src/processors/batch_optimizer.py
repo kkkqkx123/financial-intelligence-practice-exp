@@ -22,7 +22,7 @@ class BatchOptimizer:
         self.llm_client = get_llm_client()
         self.enhancement_tracker = get_enhancement_tracker()
         self.config = BATCH_PROCESSING_CONFIG
-        self.optimization_stats = {
+        self.optimization_stats: Dict[str, Any] = {
             'entities_processed': 0,
             'relationships_processed': 0,
             'llm_calls_made': 0,
@@ -497,7 +497,7 @@ class BatchOptimizer:
         
         return results
     
-    def _process_conflict_resolution(self, conflicts: List[Dict]) -> Dict:
+    def _process_conflict_resolution(self, conflicts: List[Dict]) -> Dict[str, Any]:
         """处理冲突解决"""
         # 批量处理冲突解决
         batch_result = self.enhancement_tracker.process_batch_requests(
@@ -506,7 +506,11 @@ class BatchOptimizer:
         )
         
         if batch_result['results']:
-            return batch_result['results'][0]
+            result = batch_result['results'][0]
+            if isinstance(result, dict):
+                return result
+            else:
+                return {'resolved_entity': result, 'confidence': 0.7}
         
         return {'resolved_entity': conflicts[0], 'confidence': 0.5}
     
@@ -569,10 +573,11 @@ class BatchOptimizer:
     
     def _calculate_efficiency_ratio(self) -> float:
         """计算效率比率"""
-        if self.optimization_stats['llm_calls_made'] == 0:
+        llm_calls_made = self.optimization_stats['llm_calls_made']
+        if llm_calls_made == 0:
             return 0.0
         
         total_processed = (self.optimization_stats['entities_processed'] + 
                           self.optimization_stats['relationships_processed'])
         
-        return total_processed / self.optimization_stats['llm_calls_made']
+        return float(total_processed) / float(llm_calls_made)

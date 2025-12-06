@@ -3,12 +3,16 @@
 """
 
 import re
-from typing import Dict, List, Optional, Union
+import logging
+from typing import Dict, List, Optional, Union, Any
 from datetime import datetime
 from .config import (
     ROUND_MAPPING, AMOUNT_RULES, CAPITAL_RULES, 
     DATE_PATTERNS, PERFORMANCE_CONFIG
 )
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 
 class DataParser:
@@ -16,23 +20,55 @@ class DataParser:
     
     def __init__(self):
         self.stats = {
-            'companies_parsed': 0,
-            'events_parsed': 0,
-            'institutions_parsed': 0,
-            'parse_errors': 0
+            'total_records': 0,
+            'companies_processed': 0,
+            'events_processed': 0,
+            'investors_processed': 0,
+            'errors': 0
         }
     
     # ==================== 公司数据解析 ====================
     
-    def parse_companies(self, text: str) -> List[Dict]:
+    def parse_companies(self, data: Union[str, List[Dict]]) -> List[Dict]:
         """解析公司数据"""
         companies = []
+        
+        # 如果是列表，说明是已经解析好的字典数据
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    if isinstance(item, dict):
+                        company = {
+                            'short_name': item.get('short_name', item.get('name', '')).strip(),
+                            'full_name': item.get('full_name', item.get('name', '')).strip(),
+                            'description': item.get('description', '').strip(),
+                            'registration_name': item.get('registration_name', item.get('name', '')).strip(),
+                            'address': item.get('address') or item.get('contact_info', {}).get('address'),
+                            'registration_id': item.get('registration_id', '').strip(),
+                            'establish_date': item.get('establish_date') or item.get('registration_date'),
+                            'legal_representative': item.get('legal_representative', '').strip(),
+                            'registered_capital': item.get('registered_capital'),
+                            'credit_code': item.get('credit_code', '').strip(),
+                            'website': item.get('website'),
+                            'parsed_by': 'hardcoded',
+                            'parse_confidence': 1.0
+                        }
+                        companies.append(company)
+                        self.stats['companies_processed'] += 1
+                        self.stats['total_records'] += 1
+                except Exception as e:
+                    self.stats['errors'] += 1
+                    logger.error(f"解析公司数据失败: {item}... 错误: {e}")
+            return companies
+        
+        # 如果是字符串，使用原有的解析逻辑
+        text = str(data)
         lines = text.strip().split('\n')
         
         # 跳过统计行和表头
         data_started = False
         for line in lines:
-            if line.startswith('名称,公司名称,公司介绍'):
+            if line.startswith('公司简称,公司全称,公司描述,注册名称'):
                 data_started = True
                 continue
             if not data_started or not line.strip():
@@ -57,18 +93,45 @@ class DataParser:
                         'parse_confidence': 1.0
                     }
                     companies.append(company)
-                    self.stats['companies_parsed'] += 1
+                    self.stats['companies_processed'] += 1
+                    self.stats['total_records'] += 1
             except Exception as e:
-                self.stats['parse_errors'] += 1
-                print(f"解析公司数据失败: {line[:50]}... 错误: {e}")
+                self.stats['errors'] += 1
+                logger.error(f"解析公司数据失败: {line[:50]}... 错误: {e}")
         
         return companies
     
     # ==================== 投资事件解析 ====================
     
-    def parse_investment_events(self, text: str) -> List[Dict]:
+    def parse_investment_events(self, data: Union[str, List[Dict]]) -> List[Dict]:
         """解析投资事件数据"""
         events = []
+        
+        # 如果是列表，说明是已经解析好的字典数据
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    if isinstance(item, dict):
+                        event = {
+                            'description': item.get('description', item.get('event', '')).strip(),
+                            'investors': item.get('investors', item.get('investment_partners', [])),
+                            'investee': item.get('investee', item.get('company', '')).strip(),
+                            'investment_date': item.get('investment_date') or item.get('date'),
+                            'round': item.get('round', item.get('funding_round', '')),
+                            'amount': item.get('amount', item.get('funding_amount')),
+                            'parsed_by': 'hardcoded',
+                            'parse_confidence': 1.0
+                        }
+                        events.append(event)
+                        self.stats['events_processed'] += 1
+                        self.stats['total_records'] += 1
+                except Exception as e:
+                    self.stats['errors'] += 1
+                    logger.error(f"解析投资事件数据失败: {item}... 错误: {e}")
+            return events
+        
+        # 如果是字符串，使用原有的解析逻辑
+        text = str(data)
         lines = text.strip().split('\n')
         
         data_started = False
@@ -93,18 +156,44 @@ class DataParser:
                         'parse_confidence': 1.0
                     }
                     events.append(event)
-                    self.stats['events_parsed'] += 1
+                    self.stats['events_processed'] += 1
+                    self.stats['total_records'] += 1
             except Exception as e:
-                self.stats['parse_errors'] += 1
-                print(f"解析投资事件失败: {line[:50]}... 错误: {e}")
+                self.stats['errors'] += 1
+                logger.error(f"解析投资事件失败: {line[:50]}... 错误: {e}")
         
         return events
     
     # ==================== 投资机构解析 ====================
     
-    def parse_investment_institutions(self, text: str) -> List[Dict]:
+    def parse_investment_institutions(self, data: Union[str, List[Dict]]) -> List[Dict]:
         """解析投资机构数据"""
         institutions = []
+        
+        # 如果是列表，说明是已经解析好的字典数据
+        if isinstance(data, list):
+            for item in data:
+                try:
+                    if isinstance(item, dict):
+                        institution = {
+                            'name': item.get('name', item.get('institution_name', '')).strip(),
+                            'description': item.get('description', item.get('introduction', '')).strip(),
+                            'industries': item.get('industries', item.get('sectors', [])),
+                            'scale': item.get('scale', item.get('fund_size')),
+                            'preferred_rounds': item.get('preferred_rounds', item.get('investment_stages', [])),
+                            'parsed_by': 'hardcoded',
+                            'parse_confidence': 1.0
+                        }
+                        institutions.append(institution)
+                        self.stats['investors_processed'] += 1
+                        self.stats['total_records'] += 1
+                except Exception as e:
+                    self.stats['errors'] += 1
+                    logger.error(f"解析投资机构数据失败: {item}... 错误: {e}")
+            return institutions
+        
+        # 如果是字符串，使用原有的解析逻辑
+        text = str(data)
         lines = text.strip().split('\n')
         
         # 跳过两行统计信息
@@ -133,10 +222,11 @@ class DataParser:
                         'parse_confidence': 1.0
                     }
                     institutions.append(institution)
-                    self.stats['institutions_parsed'] += 1
+                    self.stats['investors_processed'] += 1
+                    self.stats['total_records'] += 1
             except Exception as e:
-                self.stats['parse_errors'] += 1
-                print(f"解析投资机构失败: {line[:50]}... 错误: {e}")
+                self.stats['errors'] += 1
+                logger.error(f"解析投资机构失败: {line[:50]}... 错误: {e}")
         
         return institutions
     
@@ -144,7 +234,7 @@ class DataParser:
     
     def _smart_split(self, line: str) -> List[str]:
         """智能分割 - 处理引号和逗号"""
-        fields = []
+        fields: List[str] = []
         current = ""
         in_quotes = False
         
@@ -173,9 +263,11 @@ class DataParser:
             if match:
                 try:
                     # 验证日期有效性
-                    date_obj = datetime.strptime(converter(match.group()), '%Y-%m-%d')
+                    date_str = converter(match.group())
+                    assert isinstance(date_str, str), f"Converter should return str, got {type(date_str)}"
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
                     if date_obj <= datetime.now():
-                        return converter(match.group())
+                        return date_str
                 except ValueError:
                     continue
         
@@ -321,15 +413,46 @@ class DataParser:
         
         return scale_str
     
-    def get_stats(self) -> Dict:
-        """获取解析统计信息"""
-        return self.stats.copy()
+    def parse_csv_data(self, csv_content: str) -> List[Dict]:
+        """解析CSV数据内容"""
+        import csv
+        from io import StringIO
+        
+        result = []
+        try:
+            csv_reader = csv.DictReader(StringIO(csv_content))
+            for row in csv_reader:
+                # 清理和标准化数据
+                cleaned_row = {}
+                for key, value in row.items():
+                    # 去除前后空格
+                    if isinstance(value, str):
+                        cleaned_row[key.strip()] = value.strip()
+                    else:
+                        cleaned_row[key.strip()] = value
+                result.append(cleaned_row)
+        except Exception as e:
+            logger.error(f"CSV解析失败: {e}")
+            return []
+        
+        return result
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取解析统计数据"""
+        return {
+            'total_records': self.stats['total_records'],
+            'companies_processed': self.stats['companies_processed'],
+            'events_processed': self.stats['events_processed'],
+            'investors_processed': self.stats['investors_processed'],
+            'errors': self.stats['errors']
+        }
     
     def reset_stats(self):
-        """重置统计信息"""
+        """重置解析统计数据"""
         self.stats = {
-            'companies_parsed': 0,
-            'events_parsed': 0,
-            'institutions_parsed': 0,
-            'parse_errors': 0
+            'total_records': 0,
+            'companies_processed': 0,
+            'events_processed': 0,
+            'investors_processed': 0,
+            'errors': 0
         }

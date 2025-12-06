@@ -87,3 +87,39 @@ BATCH_PROCESSING_CONFIG = {
     'enable_caching': True,  # 启用缓存
     'cache_ttl': 3600,  # 缓存TTL（秒）
 }
+
+# 日志配置
+LOGGING_CONFIG = {
+    'level': 'INFO',
+    'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    'datefmt': '%Y-%m-%d %H:%M:%S'
+}
+
+# 数据验证规则配置
+VALIDATION_RULES = {
+    'company': {
+        'required_fields': ['name', 'description'],
+        'optional_fields': ['website', 'address', 'registration_id'],
+        'field_validators': {
+            'name': {'min_length': 1, 'max_length': 200},
+            'website': {'pattern': r'^https?://[\w\-]+(\.[\w\-]+)+[/#?]?.*$'},
+            'registration_id': {'pattern': r'^[0-9A-Z]{15,20}$'}
+        }
+    },
+    'investor': {
+        'required_fields': ['name', 'description'],
+        'optional_fields': ['scale', 'preferred_rounds'],
+        'field_validators': {
+            'name': {'min_length': 1, 'max_length': 200},
+            'scale': {'min_value': 0}
+        }
+    },
+    'event': {
+        'required_fields': ['description', 'investee'],
+        'optional_fields': ['amount', 'round', 'investment_date'],
+        'field_validators': {
+            'amount': {'min_value': 0},
+            'investment_date': {'pattern': r'^\d{4}-\d{2}-\d{2}$'}
+        }
+    }
+}
