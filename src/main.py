@@ -20,6 +20,12 @@ sys.path.insert(0, str(project_root))
 from processors import DataParser, EntityMatcher, HybridKGBuilder, DataValidator, BatchOptimizer
 from processors.config import LOGGING_CONFIG
 
+try:
+    from integrations.neo4j_exporter import KnowledgeGraphIntegrationManager, Neo4jConfig
+    NEO4J_INTEGRATION_AVAILABLE = True
+except ImportError:
+    NEO4J_INTEGRATION_AVAILABLE = False
+
 # 配置日志
 logging.basicConfig(**LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
@@ -28,13 +34,22 @@ logger = logging.getLogger(__name__)
 class KnowledgeGraphPipeline:
     """知识图谱构建流水线"""
     
-    def __init__(self, data_dir: str = "dataset", output_dir: str = "output"):
+    def __init__(self, data_dir: str = "dataset", output_dir: str = "output", 
+                 enable_neo4j: bool = False, neo4j_config: Optional[Dict] = None):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.parser = DataParser()
         self.builder = HybridKGBuilder()
         self.validator = DataValidator()
         self.optimizer = BatchOptimizer()
+        
+        # Neo4j集成
+        self.enable_neo4j = enable_neo4j and NEO4J_INTEGRATION_AVAILABLE
+        self.neo4j_manager = None
+        if self.enable_neo4j:
+            neo4j_config_obj = Neo4jConfig(**(neo4j_config or {}))
+            self.neo4j_manager = KnowledgeGraphIntegrationManager(neo4j_config_obj)
+            logger.info("Neo4j集成已启用")
         
         # 确保输出目录存在
         self.output_dir.mkdir(exist_ok=True)
@@ -370,6 +385,32 @@ class KnowledgeGraphPipeline:
         logger.info(f"验证结果文件：{validation_file}")
         logger.info(f"增强结果文件：{enhancement_file}")
         logger.info(f"统计文件：{stats_file}")
+
+    def export_to_neo4j(self, kg_data: Dict) -> Dict:
+        """导出知识图谱到Neo4j"""
+        if not self.neo4j_manager:
+            return {"error": "Neo4j管理器未初始化"}
+        
+        try:
+            # 导出知识图谱数据
+            export_result = self.neo4j_manager.export_knowledge_graph(kg_data)
+            
+            # 获取统计信息
+            stats = self.neo4j_manager.get_knowledge_graph_stats()
+            
+            return {
+                "success": True,
+                "export_result": export_result,
+                "statistics": stats,
+                "message": "知识图谱已成功导出到Neo4j"
+            }
+        except Exception as e:
+            logger.error(f"Neo4j导出失败: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "知识图谱导出到Neo4j失败"
+            }
     
     def run_full_pipeline(self, save_intermediate: bool = True) -> Dict:
         """运行完整的知识图谱构建流水线"""
@@ -413,12 +454,19 @@ class KnowledgeGraphPipeline:
             
             logger.info(f"知识图谱构建完成！总耗时: {total_time:.2f}秒")
             
+            # 步骤9: Neo4j知识图谱导出
+            if self.enable_neo4j and self.neo4j_manager:
+                logger.info("步骤9: Neo4j知识图谱导出")
+                neo4j_results = self.export_to_neo4j(kg_data)
+                logger.info(f"Neo4j导出完成: {neo4j_results}")
+            
             return {
                 'success': True,
                 'knowledge_graph': kg_data,
                 'quality_report': quality_report,
                 'statistics': self.pipeline_stats,
-                'llm_enhancement_required': len(self.builder.get_llm_enhancement_batch())
+                'llm_enhancement_required': len(self.builder.get_llm_enhancement_batch()),
+                'neo4j_results': neo4j_results if self.enable_neo4j else None
             }
             
         except Exception as e:
