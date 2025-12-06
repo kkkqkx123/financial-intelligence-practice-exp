@@ -3,6 +3,7 @@ from .data_parser import DataParser
 from .entity_matcher import EntityMatcher
 from .data_validator import DataValidator
 from .llm_client import LLMClientInterface, MockLLMClient
+from .llm_processor import LLMProcessorInterface, MockLLMProcessor, BatchLLMProcessor, LLMEnhancementTracker
 from .kg_builder import HybridKGBuilder
 from .batch_optimizer import BatchOptimizer
 
@@ -16,6 +17,10 @@ __all__ = [
     'LLMClient',
     'LLMClientInterface',
     'MockLLMClient',
+    'LLMProcessorInterface',
+    'MockLLMProcessor',
+    'BatchLLMProcessor',
+    'LLMEnhancementTracker',
     'HybridKGBuilder',
     'BatchOptimizer'
 ]

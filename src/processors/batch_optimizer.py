@@ -9,7 +9,8 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 from collections import defaultdict
 from datetime import datetime
 
-from .llm_client import get_llm_client, get_enhancement_tracker
+from .llm_client import get_llm_client
+from .llm_processor import get_enhancement_tracker, get_batch_llm_processor
 from .config import CONFIDENCE_THRESHOLDS, BATCH_PROCESSING_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class BatchOptimizer:
     
     def __init__(self):
         self.llm_client = get_llm_client()
+        self.batch_llm_processor = get_batch_llm_processor()
         self.enhancement_tracker = get_enhancement_tracker()
         self.config = BATCH_PROCESSING_CONFIG
         self.optimization_stats: Dict[str, Any] = {
@@ -27,7 +29,10 @@ class BatchOptimizer:
             'relationships_processed': 0,
             'llm_calls_made': 0,
             'batch_sizes': defaultdict(int),
-            'processing_time': 0.0
+            'processing_time': 0.0,
+            'smart_batches_used': 0,  # 智能批量处理使用次数
+            'traditional_batches_used': 0,  # 传统批量处理使用次数
+            'total_api_calls_saved': 0  # 节省的API调用次数
         }
     
     def optimize_entity_descriptions(self, entities: Dict[str, Dict], entity_type: str) -> Dict[str, Dict]:
@@ -260,9 +265,9 @@ class BatchOptimizer:
         
         return standardized_names
     
-    def process_all_pending_enhancements(self) -> Dict:
+    def process_all_pending_enhancements(self, use_smart_batching: bool = True) -> Dict:
         """处理所有待处理的增强请求"""
-        logger.info("开始处理所有待处理的LLM增强请求")
+        logger.info(f"开始处理所有待处理的LLM增强请求 (智能批量: {use_smart_batching})")
         
         start_time = datetime.now()
         
@@ -274,7 +279,9 @@ class BatchOptimizer:
             return {
                 'processed': 0,
                 'results': [],
-                'processing_time': 0.0
+                'processing_time': 0.0,
+                'batches': 0,
+                'api_calls_saved': 0
             }
         
         logger.info(f"待处理请求: {pending_stats['pending_requests']} 个")
@@ -283,12 +290,29 @@ class BatchOptimizer:
         batch_size = self.config['default_batch_size']
         all_results = []
         total_processed = 0
+        batch_count = 0
+        api_calls_saved = 0
         
         while pending_stats['pending_requests'] > 0:
-            batch_result = self.enhancement_tracker.process_batch_requests(
-                self.llm_client,
-                batch_size=batch_size
-            )
+            if use_smart_batching and hasattr(self.enhancement_tracker, 'process_batch_requests_smart'):
+                # 使用智能批量处理
+                batch_result = self.enhancement_tracker.process_batch_requests_smart(
+                    self.batch_llm_processor,
+                    batch_size=batch_size
+                )
+                self.optimization_stats['smart_batches_used'] += 1
+                api_calls_saved += (batch_result['processed'] - batch_result['batches'])
+                batch_count += batch_result['batches']
+                logger.info(f"智能批量处理: {batch_result['processed']} 个请求，{batch_result['batches']} 个批次")
+            else:
+                # 使用传统批量处理
+                batch_result = self.enhancement_tracker.process_batch_requests(
+                    self.llm_client,
+                    batch_size=batch_size
+                )
+                self.optimization_stats['traditional_batches_used'] += 1
+                batch_count += 1
+                logger.info(f"传统批量处理: {batch_result['processed']} 个请求")
             
             all_results.extend(batch_result['results'])
             total_processed += batch_result['processed']
@@ -296,7 +320,7 @@ class BatchOptimizer:
             # 更新统计
             pending_stats = self.enhancement_tracker.get_stats()
             
-            if batch_result['remaining'] == 0:
+            if batch_result.get('remaining', 0) == 0:
                 break
         
         # 更新统计
@@ -305,13 +329,17 @@ class BatchOptimizer:
         
         self.optimization_stats['llm_calls_made'] += total_processed
         self.optimization_stats['processing_time'] += processing_time
+        self.optimization_stats['total_api_calls_saved'] += api_calls_saved
         
-        logger.info(f"批量处理完成: {total_processed} 个请求，耗时 {processing_time:.2f} 秒")
+        logger.info(f"批量处理完成: {total_processed} 个请求，{batch_count} 个批次，"
+                   f"节省API调用: {api_calls_saved} 次，耗时 {processing_time:.2f} 秒")
         
         return {
             'processed': total_processed,
             'results': all_results,
-            'processing_time': processing_time
+            'processing_time': processing_time,
+            'batches': batch_count,
+            'api_calls_saved': api_calls_saved
         }
     
     def get_optimization_stats(self) -> Dict:
@@ -322,7 +350,11 @@ class BatchOptimizer:
             'llm_calls_made': self.optimization_stats['llm_calls_made'],
             'batch_sizes': dict(self.optimization_stats['batch_sizes']),
             'processing_time': self.optimization_stats['processing_time'],
-            'efficiency_ratio': self._calculate_efficiency_ratio()
+            'efficiency_ratio': self._calculate_efficiency_ratio(),
+            'smart_batches_used': self.optimization_stats['smart_batches_used'],
+            'traditional_batches_used': self.optimization_stats['traditional_batches_used'],
+            'total_api_calls_saved': self.optimization_stats['total_api_calls_saved'],
+            'cost_savings_percentage': self._calculate_cost_savings_percentage()
         }
     
     def export_enhancement_queue(self, filepath: str) -> None:
@@ -578,6 +610,16 @@ class BatchOptimizer:
             return 0.0
         
         total_processed = (self.optimization_stats['entities_processed'] + 
-                          self.optimization_stats['relationships_processed'])
+                         self.optimization_stats['relationships_processed'])
         
         return float(total_processed) / float(llm_calls_made)
+    
+    def _calculate_cost_savings_percentage(self) -> float:
+        """计算成本节省百分比"""
+        total_processed = self.optimization_stats['entities_processed'] + self.optimization_stats['relationships_processed']
+        api_calls_saved = self.optimization_stats['total_api_calls_saved']
+        
+        if total_processed == 0:
+            return 0.0
+        
+        return (api_calls_saved / total_processed) * 100
