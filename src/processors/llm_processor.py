@@ -8,6 +8,8 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, cast
 import logging
+import os
+from .llm_client import get_llm_client, LLMClientInterface
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -152,11 +154,197 @@ class MockLLMProcessor(LLMProcessorInterface):
         })
 
 
-class BatchLLMProcessor(MockLLMProcessor):
+class OpenAICompatibleProcessor(LLMProcessorInterface):
+    """OpenAI兼容处理器 - 使用真实的LLM客户端"""
+    
+    def __init__(self, llm_client: Optional[LLMClientInterface] = None):
+        self.llm_client = llm_client or get_llm_client()
+        self.call_count = 0
+        logger.info("初始化OpenAI兼容处理器")
+    
+    def enhance_entity_description(self, entity_name: str, context: Dict[str, Any]) -> str:
+        """增强实体描述（使用真实LLM）"""
+        self.call_count += 1
+        logger.info(f"[REAL] 增强实体描述: {entity_name}")
+        
+        prompt = f"""
+        请为以下实体生成详细的描述信息：
+        
+        实体名称：{entity_name}
+        上下文信息：{json.dumps(context, ensure_ascii=False, indent=2)}
+        
+        请提供一段简洁但全面的描述，包括公司的主要业务、特点和相关信息。
+        描述应该专业、准确，长度控制在100-200字之间。
+        """
+        
+        try:
+            response = self.llm_client.generate_response(prompt)
+            return response.strip()
+        except Exception as e:
+            logger.error(f"增强实体描述失败: {e}")
+            # 回退到简单的描述
+            return f"{entity_name}是一家专注于{context.get('industry', '未知领域')}的公司。"
+    
+    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
+        """解决实体冲突（使用真实LLM）"""
+        self.call_count += 1
+        logger.info(f"[REAL] 解决实体冲突: {len(conflicting_entities)} 个冲突")
+        
+        if not conflicting_entities:
+            return {'resolved_entity': None, 'confidence': 0.0}
+        
+        prompt = f"""
+        请分析以下实体冲突并提供解决方案：
+        
+        冲突实体列表：
+        {json.dumps(conflicting_entities, ensure_ascii=False, indent=2)}
+        
+        请确定：
+        1. 这些实体是否代表同一个真实实体？
+        2. 如果是，哪个是最准确的标准名称？
+        3. 其他名称应该如何处理（作为别名还是错误）？
+        4. 提供一个统一的实体表示。
+        
+        请以JSON格式返回结果，包含resolved_entity、confidence和merged_aliases字段。
+        """
+        
+        try:
+            response = self.llm_client.generate_response(prompt)
+            # 尝试解析JSON响应
+            result = json.loads(response)
+            return result
+        except Exception as e:
+            logger.error(f"解决实体冲突失败: {e}")
+            # 回退到简单的解决方案
+            best_entity = max(conflicting_entities, key=lambda x: x.get('confidence', 0))
+            return {
+                'resolved_entity': best_entity,
+                'confidence': best_entity.get('confidence', 0),
+                'merged_aliases': [e.get('name') for e in conflicting_entities if e != best_entity]
+            }
+    
+    def extract_relationships_from_text(self, text: str) -> List[Dict]:
+        """从文本中提取关系（使用真实LLM）"""
+        self.call_count += 1
+        logger.info(f"[REAL] 从文本提取关系: {text[:100]}...")
+        
+        prompt = f"""
+        请从以下文本中提取实体之间的关系：
+        
+        文本内容：
+        {text}
+        
+        请识别文本中提到的所有实体（公司、人物、产品等）以及它们之间的关系。
+        关系类型可以包括：投资、合作、竞争、收购、子母公司等。
+        
+        请以JSON数组格式返回结果，每个关系包含以下字段：
+        - type: 关系类型
+        - entities: 涉及的实体列表
+        - confidence: 置信度（0-1）
+        - description: 关系描述
+        - metadata: 额外的元数据
+        """
+        
+        try:
+            response = self.llm_client.generate_response(prompt)
+            # 尝试解析JSON响应
+            relationships = json.loads(response)
+            return relationships if isinstance(relationships, list) else []
+        except Exception as e:
+            logger.error(f"提取关系失败: {e}")
+            # 回退到简单的模式匹配
+            relationships = []
+            if any(keyword in text for keyword in ['投资', '融资', '领投', '跟投']):
+                relationships.append({
+                    'type': 'investment',
+                    'confidence': 0.6,
+                    'description': '投资关系',
+                    'entities': [],
+                    'metadata': {}
+                })
+            return relationships
+    
+    def classify_company_industry(self, company_info: Dict) -> List[str]:
+        """分类公司行业（使用真实LLM）"""
+        self.call_count += 1
+        logger.info(f"[REAL] 公司行业分类: {company_info.get('name', '未知公司')}")
+        
+        prompt = f"""
+        请为以下公司进行行业分类：
+        
+        公司信息：
+        {json.dumps(company_info, ensure_ascii=False, indent=2)}
+        
+        请基于公司名称、描述、业务范围等信息，确定公司所属的行业类别。
+        请提供1-3个最相关的行业分类。
+        
+        请以JSON数组格式返回行业列表，例如：["科技", "金融", "医疗健康"]
+        """
+        
+        try:
+            response = self.llm_client.generate_response(prompt)
+            # 尝试解析JSON响应
+            industries = json.loads(response)
+            return industries if isinstance(industries, list) else []
+        except Exception as e:
+            logger.error(f"行业分类失败: {e}")
+            # 回退到基于关键词的分类
+            name = company_info.get('name', '')
+            description = company_info.get('description', '')
+            text = f"{name} {description}"
+            
+            industries = []
+            keywords_map = {
+                '科技': ['科技', '技术', '智能', '软件', '互联网', '数据', 'AI', '人工智能'],
+                '金融': ['金融', '银行', '投资', '理财', '支付', '保险'],
+                '医疗健康': ['医疗', '健康', '生物', '医药']
+            }
+            
+            for industry, keywords in keywords_map.items():
+                if any(keyword in text for keyword in keywords):
+                    industries.append(industry)
+            
+            return industries if industries else ['其他']
+    
+    def standardize_investor_name(self, investor_name: str, context: Dict) -> str:
+        """标准化投资方名称（使用真实LLM）"""
+        self.call_count += 1
+        logger.info(f"[REAL] 标准化投资方名称: {investor_name}")
+        
+        prompt = f"""
+        请标准化以下投资方名称：
+        
+        投资方名称：{investor_name}
+        上下文信息：{json.dumps(context, ensure_ascii=False, indent=2)}
+        
+        请提供该投资方的标准名称，移除不必要的后缀，统一格式。
+        例如：
+        - "深圳市腾讯计算机系统有限公司" -> "腾讯"
+        - "阿里巴巴（中国）网络技术有限公司" -> "阿里巴巴"
+        
+        请只返回标准化后的名称，不要包含其他内容。
+        """
+        
+        try:
+            response = self.llm_client.generate_response(prompt)
+            return response.strip()
+        except Exception as e:
+            logger.error(f"标准化投资方名称失败: {e}")
+            # 回退到简单的标准化
+            return investor_name.strip()
+    
+    def get_stats(self) -> Dict[str, int]:
+        """获取调用统计"""
+        return cast(Dict[str, int], {
+            'total_calls': self.call_count
+        })
+
+
+class BatchLLMProcessor(OpenAICompatibleProcessor):
     """批量LLM处理器 - 支持一次性处理多条数据"""
     
-    def __init__(self, batch_size: int = 50):
-        super().__init__()
+    def __init__(self, batch_size: int = 50, llm_client: Optional[LLMClientInterface] = None):
+        super().__init__(llm_client)
         self.batch_size = batch_size
         self.batch_call_count = 0
         logger.info(f"初始化批量LLM处理器，批量大小: {batch_size}")
@@ -172,7 +360,30 @@ class BatchLLMProcessor(MockLLMProcessor):
         # 构建批量提示词
         batch_prompt = self._build_batch_prompt_for_descriptions(entities)
         
-        # 模拟批量处理 - 实际使用时调用真实LLM API
+        try:
+            # 使用真实LLM客户端进行批量处理
+            response = self.llm_client.generate_response(
+                prompt=batch_prompt,
+                system_prompt="你是一个专业的企业信息分析师，请为给定的实体生成详细描述。"
+            )
+            
+            # 解析批量响应
+            try:
+                result = json.loads(response)
+                if 'descriptions' in result and isinstance(result['descriptions'], list):
+                    descriptions = result['descriptions']
+                    # 确保返回的描述数量与输入实体数量一致
+                    if len(descriptions) == len(entities):
+                        return descriptions
+                    else:
+                        logger.warning(f"批量描述数量不匹配: 期望 {len(entities)}, 实际 {len(descriptions)}")
+            except json.JSONDecodeError:
+                logger.warning("无法解析批量描述的JSON响应，使用回退方法")
+            
+        except Exception as e:
+            logger.error(f"批量增强实体描述失败: {e}")
+        
+        # 回退到逐个处理
         enhanced_descriptions = []
         for entity in entities:
             name = entity.get('name', '未知实体')
@@ -190,6 +401,33 @@ class BatchLLMProcessor(MockLLMProcessor):
         self.batch_call_count += 1
         logger.info(f"[BATCH] 批量解决实体冲突: {len(conflict_groups)} 个冲突组")
         
+        # 构建批量提示词
+        batch_prompt = self._build_batch_prompt_for_conflicts(conflict_groups)
+        
+        try:
+            # 使用真实LLM客户端进行批量处理
+            response = self.llm_client.generate_response(
+                prompt=batch_prompt,
+                system_prompt="你是一个专业的数据分析师，请解决给定的实体冲突问题。"
+            )
+            
+            # 解析批量响应
+            try:
+                result = json.loads(response)
+                if 'conflict_resolutions' in result and isinstance(result['conflict_resolutions'], list):
+                    resolutions = result['conflict_resolutions']
+                    # 确保返回的解决数量与输入冲突组数量一致
+                    if len(resolutions) == len(conflict_groups):
+                        return resolutions
+                    else:
+                        logger.warning(f"批量冲突解决数量不匹配: 期望 {len(conflict_groups)}, 实际 {len(resolutions)}")
+            except json.JSONDecodeError:
+                logger.warning("无法解析批量冲突解决的JSON响应，使用回退方法")
+            
+        except Exception as e:
+            logger.error(f"批量解决实体冲突失败: {e}")
+        
+        # 回退到逐个处理
         results = []
         for conflict_group in conflict_groups:
             if conflict_group:
@@ -268,6 +506,33 @@ class BatchLLMProcessor(MockLLMProcessor):
         prompt_parts.append("请为每个实体生成一段详细的描述，描述应该包含公司的业务、特点、成立时间等信息。")
         prompt_parts.append("请以JSON格式返回结果，格式如下：")
         prompt_parts.append('{"descriptions": ["描述1", "描述2", ...]}')
+        
+        return "\n".join(prompt_parts)
+    
+    def _build_batch_prompt_for_conflicts(self, conflict_groups: List[List[Dict]]) -> str:
+        """构建批量冲突解决的提示词"""
+        prompt_parts = []
+        prompt_parts.append("请解决以下实体冲突组，判断每组中的实体是否代表同一个实体：")
+        prompt_parts.append("")
+        
+        for i, conflict_group in enumerate(conflict_groups, 1):
+            prompt_parts.append(f"冲突组 {i}:")
+            for j, entity in enumerate(conflict_group, 1):
+                name = entity.get('name', '未知实体')
+                description = entity.get('description', '')
+                context = entity.get('context', {})
+                
+                prompt_parts.append(f"  实体 {j}: {name}")
+                if description:
+                    prompt_parts.append(f"    描述: {description}")
+                if context:
+                    prompt_parts.append(f"    上下文: {json.dumps(context, ensure_ascii=False)}")
+            prompt_parts.append("")
+        
+        prompt_parts.append("对于每个冲突组，请判断这些实体是否代表同一个实体。")
+        prompt_parts.append("请以JSON格式返回结果，格式如下：")
+        prompt_parts.append('{"conflict_resolutions": [{"resolved_entity": {"name": "合并后的名称", "description": "合并后的描述"}, "confidence": 0.9}, ...]}')
+        prompt_parts.append("如果实体不冲突，confidence应该较低；如果确定是同一实体，confidence应该较高。")
         
         return "\n".join(prompt_parts)
     
@@ -559,8 +824,9 @@ llm_enhancement_tracker = LLMEnhancementTracker()
 
 
 def get_llm_processor() -> LLMProcessorInterface:
-    """获取LLM处理器实例"""
-    return mock_llm_processor
+    """获取LLM处理器实例 - 使用OpenAI兼容客户端"""
+    llm_client = get_llm_client()
+    return OpenAICompatibleProcessor(llm_client)
 
 
 def get_enhancement_tracker() -> LLMEnhancementTracker:
@@ -569,5 +835,6 @@ def get_enhancement_tracker() -> LLMEnhancementTracker:
 
 
 def get_batch_llm_processor() -> BatchLLMProcessor:
-    """获取批量LLM处理器实例"""
-    return mock_llm_processor
+    """获取批量LLM处理器实例 - 使用OpenAI兼容客户端"""
+    llm_client = get_llm_client()
+    return BatchLLMProcessor(llm_client=llm_client)

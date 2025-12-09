@@ -2,25 +2,25 @@
 from .data_parser import DataParser
 from .entity_matcher import EntityMatcher
 from .data_validator import DataValidator
-from .llm_client import LLMClientInterface, MockLLMClient
-from .llm_processor import LLMProcessorInterface, MockLLMProcessor, BatchLLMProcessor, LLMEnhancementTracker
+from .llm_client import LLMClientInterface, OpenAICompatibleClient, PollingPool, get_llm_client
+from .llm_processor import LLMProcessorInterface, MockLLMProcessor, BatchLLMProcessor, LLMEnhancementTracker, get_llm_processor, get_batch_llm_processor
 from .kg_builder import HybridKGBuilder
 from .batch_optimizer import BatchOptimizer
-
-# 为了向后兼容，提供LLMClient别名
-LLMClient = MockLLMClient
 
 __all__ = [
     'DataParser',
     'EntityMatcher', 
     'DataValidator',
-    'LLMClient',
     'LLMClientInterface',
-    'MockLLMClient',
+    'OpenAICompatibleClient',
+    'PollingPool',
+    'get_llm_client',
     'LLMProcessorInterface',
     'MockLLMProcessor',
     'BatchLLMProcessor',
     'LLMEnhancementTracker',
+    'get_llm_processor',
+    'get_batch_llm_processor',
     'HybridKGBuilder',
     'BatchOptimizer'
 ]
