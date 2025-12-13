@@ -66,36 +66,63 @@ class KnowledgeGraphPipeline:
         }
     
     def load_data_files(self) -> Dict[str, List[Dict]]:
-        """加载数据文件"""
+        """加载数据文件 - 支持CSV和Markdown格式"""
         logger.info("开始加载数据文件")
         
-        data_files = {
-            'companies': 'company_data.md',
-            'investment_events': 'investment_events.md',
-            'investors': 'investment_structure.md'
+        # 支持多种文件格式，按优先级顺序尝试
+        data_file_mappings = {
+            'companies': ['company_data.csv', 'company_data.md'],
+            'investment_events': ['investment_events.csv', 'investment_events.md'],
+            'investors': ['investment_structure.csv', 'investment_structure.md']
         }
         
         loaded_data: Dict[str, List[Dict]] = {}
         
-        for data_type, filename in data_files.items():
-            file_path = self.data_dir / filename
+        for data_type, filename_options in data_file_mappings.items():
+            data_loaded = False
             
-            if not file_path.exists():
-                logger.warning(f"数据文件不存在: {file_path}")
-                loaded_data[data_type] = []
-                continue
-            
-            try:
-                # 解析Markdown文件中的CSV数据
-                data = self._parse_md_csv_file(file_path)
-                loaded_data[data_type] = data
-                logger.info(f"加载 {data_type}: {len(data)} 条记录")
+            for filename in filename_options:
+                file_path = self.data_dir / filename
                 
-            except Exception as e:
-                logger.error(f"加载数据文件失败 {file_path}: {e}")
+                if not file_path.exists():
+                    continue
+                
+                try:
+                    # 根据文件扩展名选择合适的解析方法
+                    if filename.endswith('.csv'):
+                        logger.info(f"检测到CSV文件: {filename}")
+                        data = self._parse_csv_file(file_path)
+                    elif filename.endswith('.md'):
+                        logger.info(f"检测到Markdown文件: {filename}")
+                        data = self._parse_md_csv_file(file_path)
+                    else:
+                        logger.warning(f"不支持的文件格式: {filename}")
+                        continue
+                    
+                    loaded_data[data_type] = data
+                    logger.info(f"加载 {data_type}: {len(data)} 条记录")
+                    data_loaded = True
+                    break
+                    
+                except Exception as e:
+                    logger.error(f"加载数据文件失败 {file_path}: {e}")
+                    continue
+            
+            if not data_loaded:
+                logger.warning(f"无法加载 {data_type} 数据，所有候选文件都不存在或加载失败")
                 loaded_data[data_type] = []
         
         return loaded_data
+    
+    def _parse_csv_file(self, file_path: Path) -> List[Dict]:
+        """直接解析CSV文件"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return self.parser.parse_csv_data(content)
+        except Exception as e:
+            logger.error(f"CSV文件解析失败 {file_path}: {e}")
+            return []
     
     def _parse_md_csv_file(self, file_path: Path) -> List[Dict]:
         """解析Markdown文件中的CSV数据"""

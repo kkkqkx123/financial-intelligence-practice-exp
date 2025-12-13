@@ -50,7 +50,7 @@ class CompletePipelineTester:
             if enable_neo4j and NEO4J_AVAILABLE:
                 neo4j_config = {
                     "uri": "bolt://localhost:7687",
-                    "user": "neo4j",
+                    "username": "neo4j",
                     "password": "password",
                     "database": "neo4j"
                 }

@@ -48,6 +48,7 @@ DATE_PATTERNS = [
     (r'\d{4}-\d{1,2}-\d{1,2}', lambda x: x),  # YYYY-MM-DD
     (r'\d{4}/\d{1,2}/\d{1,2}', lambda x: x.replace('/', '-')),  # YYYY/MM/DD
     (r'\d{4}年\d{1,2}月\d{1,2}日', lambda x: x.replace('年', '-').replace('月', '-').replace('日', '')),
+    (r'\d{4}\.\d{1,2}\.\d{1,2}', lambda x: x.replace('.', '-')),  # YYYY.MM.DD
 ]
 
 # 置信度阈值配置
@@ -56,7 +57,8 @@ CONFIDENCE_THRESHOLDS = {
     'alias_match': 0.95,
     'substring_match': 0.8,
     'fuzzy_match': 0.7,
-    'llm_match': 0.6
+    'llm_match': 0.6,
+    'entity_linking': 0.7
 }
 
 # LLM调用配置

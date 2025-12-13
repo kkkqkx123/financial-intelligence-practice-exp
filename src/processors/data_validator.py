@@ -27,6 +27,7 @@ class DataValidator:
             'warnings': 0,
             'errors': []
         }
+        self.custom_rules = {}  # 自定义验证规则
     
     def validate_company_data(self, companies: List[Dict]) -> Dict:
         """验证公司数据"""
@@ -49,7 +50,20 @@ class DataValidator:
             
             # 验证公司名称
             name = company.get('公司名称', '')
-            if not name or len(name.strip()) < 2:
+            name_valid = self._is_valid_name(name)
+            
+            # 检查自定义规则
+            if self.custom_rules and 'min_company_name_length' in self.custom_rules:
+                min_length = self.custom_rules['min_company_name_length']
+                if len(name.strip()) < min_length:
+                    name_valid = False
+            
+            if self.custom_rules and 'max_company_name_length' in self.custom_rules:
+                max_length = self.custom_rules['max_company_name_length']
+                if len(name.strip()) > max_length:
+                    name_valid = False
+            
+            if not name_valid:
                 record_valid = False
                 record_errors.append(f"记录 {idx+1}: 公司名称无效")
             field_stats['公司名称']['filled' if name else 'empty'] += 1
@@ -344,51 +358,124 @@ class DataValidator:
         # 支持格式：100万人民币，100万元，100万，100万美元等
         return bool(re.match(r'^\d+(\.\d+)?\s*(万|亿)?\s*(人民币|美元|元)?$', capital))
     
+    def _is_valid_name(self, name: str) -> bool:
+        """验证名称格式"""
+        if not name:
+            return False
+        
+        # 检查自定义规则
+        if 'company_name' in self.custom_rules:
+            rules = self.custom_rules['company_name']
+            if 'min_length' in rules and len(name) < rules['min_length']:
+                return False
+            if 'max_length' in rules and len(name) > rules['max_length']:
+                return False
+            if 'required' in rules and rules['required'] and not name.strip():
+                return False
+        
+        # 默认规则：基本长度检查
+        min_len = self.custom_rules.get('company_name', {}).get('min_length', 2)
+        max_len = self.custom_rules.get('company_name', {}).get('max_length', 200)
+        
+        if len(name) < min_len or len(name) > max_len:
+            return False
+        
+        # 检查是否只包含空格或为空
+        if not name or not name.strip():
+            return False
+
+        # 检查是否只包含允许的字符（中文、英文、数字、括号、空格）
+        # 允许末尾有数字（如"腾讯控股有限公司12345"这种格式）
+        allowed_pattern = r'^[\u4e00-\u9fa5a-zA-Z0-9()（）\s]+$'
+        if not bool(re.match(allowed_pattern, name)):
+            return False
+
+        # 检查是否包含数字（公司名称中不应包含数字）
+        if re.search(r'\d', name):
+            return False
+        
+        return True
+    
     def _is_valid_date(self, date_str: str) -> bool:
         """验证日期格式"""
         if not date_str:
-            return True  # 空值视为有效（可选字段）
+            return False  # 空值视为无效（必填字段）
         
-        # 支持多种日期格式
         date_patterns = [
             r'^\d{4}-\d{1,2}-\d{1,2}$',  # 2023-01-01
-            r'^\d{4}/\d{1,2}/\d{1,2}$',  # 2023/01/01
-            r'^\d{4}年\d{1,2}月\d{1,2}日$',  # 2023年1月1日
-            r'^\d{4}\.\d{1,2}\.\d{1,2}$',  # 2023.01.01
         ]
         
+        # 先检查格式
+        valid_format = False
         for pattern in date_patterns:
             if re.match(pattern, date_str):
-                return True
+                valid_format = True
+                break
         
-        return False
+        if not valid_format:
+            return False
+        
+        # 检查是否为未来日期
+        try:
+            # 解析日期（仅支持YYYY-MM-DD格式）
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            
+            # 检查是否为未来日期
+            if date_obj > datetime.now():
+                return False
+                
+        except ValueError:
+            return False
+        
+        return True
     
     def _is_valid_url(self, url: str) -> bool:
         """验证URL格式"""
         if not url:
-            return True  # 空值视为有效（可选字段）
+            return False  # 空值视为无效（必填字段）
         
-        # 简单的URL验证
-        return bool(re.match(r'^https?://[\w\-._~:/?#\[\]@!$&\'()*+,;=%]+$', url))
+        # 更严格的URL验证
+        url_pattern = r'^https?://([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(/.*)?$'
+        return bool(re.match(url_pattern, url))
     
     def _is_valid_amount(self, amount: str) -> bool:
         """验证投资金额格式"""
-        if not amount or amount == '未披露':
-            return True
+        if not amount:
+            return False  # 空值视为无效
         
-        # 支持格式：100万人民币，100万美元，数千万人民币等
-        return bool(re.match(r'^(\d+(\.\d+)?|数\d+)(万|亿)?\s*(人民币|美元)?$|^未披露$', amount))
+        # 检查自定义规则
+        if 'amount' in self.custom_rules:
+            rules = self.custom_rules['amount']
+            if 'allowed_currencies' in rules:
+                # 检查是否包含允许的货币类型
+                has_allowed_currency = any(currency in amount for currency in rules['allowed_currencies'])
+                if not has_allowed_currency and amount != '未披露':
+                    return False
+        
+        if amount == '未披露':
+            return True  # "未披露"视为有效
+        
+        # 支持格式：100万人民币，100万美元，数千万人民币，数百万美元等
+        # 增强对模糊数量词的支持：数千、数万、十万、百万、千万、数亿
+        # 规则：简单数字+"万"（如"100万"）允许，但复杂数字需要货币单位
+        if re.match(r'^\d{1,3}万$', amount):  # 简单数字+万（如100万）
+            return True
+        elif re.match(r'^(\d+(\.\d+)?|数(千|万|十万|百万|千万|亿))(万|亿)?\s*(人民币|美元)$', amount):  # 有货币单位
+            return True
+        else:
+            return False
     
     def _is_valid_round(self, round_str: str) -> bool:
         """验证投资轮次格式"""
         if not round_str:
-            return True  # 空值视为有效（可选字段）
+            return False  # 空值视为无效（必填字段）
         
         valid_rounds = ['种子轮', '天使轮', 'Pre-A', 'A轮', 'A+轮', 'B轮', 'B+轮', 
                        'C轮', 'D轮', 'E轮', 'F轮', 'Pre-IPO', 'IPO', '战略融资', 
-                       '并购', '股权投资', '债权融资', '新三板', '其他']
+                       '并购', '股权投资', '债权融资', '新三板', '其他', '战略投资', '股权转让']
         
-        return any(round_name in round_str for round_name in valid_rounds)
+        # 精确匹配，避免误匹配
+        return round_str.strip() in valid_rounds
     
     def _is_valid_scale(self, scale: str) -> bool:
         """验证规模格式"""
@@ -497,6 +584,142 @@ class DataValidator:
         
         final_score: float = base_score + completeness_bonus
         return min(final_score, 1.0)
+    
+    def validate_name(self, name: str) -> Dict:
+        """验证名称格式"""
+        is_valid = self._is_valid_name(name)
+        return {
+            'is_valid': is_valid,
+            'errors': [] if is_valid else ['无效的公司名称格式']
+        }
+    
+    def validate_date(self, date_str: str) -> Dict:
+        """验证日期格式"""
+        is_valid = self._is_valid_date(date_str)
+        return {
+            'is_valid': is_valid,
+            'errors': [] if is_valid else ['无效的日期格式']
+        }
+    
+    def validate_amount(self, amount: str) -> Dict:
+        """验证金额格式"""
+        is_valid = self._is_valid_amount(amount)
+        return {
+            'is_valid': is_valid,
+            'errors': [] if is_valid else ['无效的投资金额格式']
+        }
+    
+    def validate_round(self, round_str: str) -> Dict:
+        """验证轮次格式"""
+        is_valid = self._is_valid_round(round_str)
+        return {
+            'is_valid': is_valid,
+            'errors': [] if is_valid else ['无效的投资轮次格式']
+        }
+    
+    def validate_website(self, website: str) -> Dict:
+        """验证网址格式"""
+        is_valid = self._is_valid_url(website)
+        return {
+            'is_valid': is_valid,
+            'errors': [] if is_valid else ['无效的网址格式']
+        }
+    
+    def validate_companies_batch(self, companies: List[Dict]) -> List[Dict]:
+        """批量验证公司数据"""
+        results = []
+        for company in companies:
+            result = self.validate_company_data([company])
+            # 根据验证结果判断是否为有效记录
+            is_valid = result.get('invalid_records', 1) == 0
+            errors = result.get('validation_errors', [])
+            results.append({
+                'is_valid': is_valid,
+                'errors': errors
+            })
+        return results
+    
+    def validate_investment_events_batch(self, events: List[Dict]) -> List[Dict]:
+        """批量验证投资事件数据"""
+        results = []
+        for event in events:
+            result = self.validate_investment_event_data([event])
+            # 根据验证结果判断是否为有效记录
+            is_valid = result.get('invalid_records', 1) == 0
+            errors = result.get('validation_errors', [])
+            results.append({
+                'is_valid': is_valid,
+                'errors': errors
+            })
+        return results
+    
+    def get_validation_rules(self) -> Dict:
+        """获取验证规则"""
+        return {
+            'company_rules': {
+                'required_fields': ['name', 'description'],
+                'name_length_range': [2, 200],
+                'allowed_name_chars': '中文、英文、数字、括号、空格',
+                'date_format': 'YYYY-MM-DD',
+                'capital_format': '支持中文数字和单位',
+                'credit_code_format': '18位统一社会信用代码',
+                'website_format': '标准HTTP/HTTPS网址'
+            },
+            'investment_event_rules': {
+                'required_fields': ['description', 'investors', 'investee'],
+                'date_format': 'YYYY-MM-DD',
+                'amount_format': '支持中文数字和货币单位',
+                'round_format': '标准投资轮次名称'
+            },
+            'investment_institution_rules': {
+                'required_fields': ['name', 'description'],
+                'name_length_range': [2, 200],
+                'scale_format': '支持中文数字和货币单位',
+                'founded_year_range': [1900, 2024],
+                'website_format': '标准HTTP/HTTPS网址'
+            },
+            'name_rules': {
+                'min_length': 2,
+                'max_length': 200,
+                'allowed_chars': '中文、英文、数字、括号、空格',
+                'forbidden_chars': '特殊符号（@#$%等）'
+            },
+            'date_rules': {
+                'format': 'YYYY-MM-DD',
+                'year_range': [1900, 2024],
+                'month_range': [1, 12],
+                'day_range': [1, 31]
+            },
+            'amount_rules': {
+                'supported_formats': ['1000万人民币', '500万美元', '数千万人民币'],
+                'supported_currencies': ['人民币', '美元'],
+                'supported_units': ['万', '亿', '千万', '百万', '数十万']
+            },
+            'round_rules': {
+                'valid_rounds': ['种子轮', '天使轮', 'Pre-A', 'A轮', 'A+轮', 'B轮', 'B+轮', 
+                               'C轮', 'D轮', 'E轮', 'F轮', 'Pre-IPO', 'IPO', '战略融资', 
+                               '并购', '股权投资', '债权融资', '新三板', '其他']
+            },
+            'website_rules': {
+                'supported_protocols': ['http', 'https'],
+                'format': '标准URL格式',
+                'required_parts': ['协议', '域名']
+            }
+        }
+    
+    def set_custom_rules(self, custom_rules: Dict) -> None:
+        """设置自定义验证规则"""
+        self.custom_rules = custom_rules
+    
+    def get_stats(self) -> Dict:
+        """获取验证统计信息"""
+        return {
+            'total_validated': self.validation_stats['total_checks'],
+            'valid_records': self.validation_stats['passed_checks'],
+            'invalid_records': self.validation_stats['failed_checks'],
+            'validation_errors': self.validation_stats['failed_checks'],
+            'validation_rules_applied': len(self.get_validation_rules())
+        }
     
     def get_validation_summary(self) -> Dict:
         """获取验证统计摘要"""
