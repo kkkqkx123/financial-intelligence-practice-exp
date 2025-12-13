@@ -13,6 +13,12 @@ from urllib.parse import urljoin
 import urllib.request
 import urllib.error
 
+try:
+    from .config_manager import get_config_manager
+    CONFIG_MANAGER_AVAILABLE = True
+except ImportError:
+    CONFIG_MANAGER_AVAILABLE = False
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -67,12 +73,22 @@ class OpenAICompatibleClient(LLMClientInterface):
             temperature: 温度参数
             timeout: 请求超时时间
         """
-        self.api_key = api_key or os.getenv('LLM_API_KEY', '')
-        self.base_url = base_url or os.getenv('LLM_BASE_URL', '')
-        self.model = model or os.getenv('LLM_MODEL', '')
-        self.max_tokens = max_tokens or int(os.getenv('LLM_MAX_TOKENS', '1000'))
+        # 优先使用显式参数，其次使用配置管理器，最后使用环境变量
+        if CONFIG_MANAGER_AVAILABLE:
+            config_manager = get_config_manager()
+            self.api_key = api_key or config_manager.get_api_key() or os.getenv('LLM_API_KEY', '')
+            self.base_url = base_url or config_manager.get_base_url() or os.getenv('LLM_BASE_URL', '')
+            self.model = model or config_manager.get_model() or os.getenv('LLM_MODEL', '')
+            self.max_tokens = max_tokens or config_manager.get_max_tokens() or int(os.getenv('LLM_MAX_TOKENS', '1000'))
+            self.timeout = timeout or config_manager.get_timeout() or int(os.getenv('LLM_TIMEOUT', '30'))
+        else:
+            self.api_key = api_key or os.getenv('LLM_API_KEY', '')
+            self.base_url = base_url or os.getenv('LLM_BASE_URL', '')
+            self.model = model or os.getenv('LLM_MODEL', '')
+            self.max_tokens = max_tokens or int(os.getenv('LLM_MAX_TOKENS', '1000'))
+            self.timeout = timeout
+            
         self.temperature = temperature
-        self.timeout = timeout
         
         # 验证配置
         if not self.api_key:
@@ -216,6 +232,28 @@ class PollingPool:
     
     def _load_providers_from_env(self):
         """从环境变量加载provider配置"""
+        # 优先使用配置管理器中的配置
+        if CONFIG_MANAGER_AVAILABLE:
+            config_manager = get_config_manager()
+            llm_configs = config_manager.get_llm_configs()
+            
+            if llm_configs:
+                logger.info(f"从配置管理器加载 {len(llm_configs)} 个provider配置")
+                for config in llm_configs:
+                    # config是字典格式，直接处理
+                    provider_config = {
+                        'api_key': config['api_key'],
+                        'base_url': config['base_url'],
+                        'model': config['model'],
+                        'max_tokens': config['max_tokens'],
+                        'temperature': config['temperature'],
+                        'weight': config['weight'],
+                        'timeout': config['timeout']
+                    }
+                    self.providers.append(provider_config)
+                return
+        
+        # 从环境变量读取配置（新格式）
         # 支持配置多个provider，格式为:
         # LLM_PROVIDER_1_API_KEY=xxx
         # LLM_PROVIDER_1_BASE_URL=xxx

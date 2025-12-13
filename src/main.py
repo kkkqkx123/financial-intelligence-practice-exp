@@ -17,6 +17,14 @@ from typing import Dict, List, Optional, Any
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+# 导入配置管理器 - 必须在其他模块之前加载
+from processors.config_manager import load_configuration, get_config_manager
+
+# 加载配置文件
+config_loaded = load_configuration()
+if not config_loaded:
+    print("⚠️  配置加载失败，将使用默认配置")
+
 from processors import DataParser, EntityMatcher, HybridKGBuilder, DataValidator, BatchOptimizer
 from processors.config import LOGGING_CONFIG
 
@@ -518,11 +526,15 @@ class KnowledgeGraphPipeline:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="金融知识图谱构建工具")
-    parser.add_argument("--data-dir", default="src/dataset", 
-                       help="数据文件目录 (默认: src/dataset)")
-    parser.add_argument("--output-dir", default="output", 
-                       help="输出目录 (默认: output)")
+    parser = argparse.ArgumentParser(description='金融知识图谱构建工具')
+    parser.add_argument('--data-dir', type=str, default='src/dataset', help='数据文件目录')
+    parser.add_argument('--output-dir', type=str, default='output', help='输出目录')
+    parser.add_argument('--enable-neo4j', action='store_true', help='启用Neo4j集成')
+    parser.add_argument('--neo4j-uri', type=str, help='Neo4j URI')
+    parser.add_argument('--neo4j-user', type=str, help='Neo4j用户名')
+    parser.add_argument('--neo4j-password', type=str, help='Neo4j密码')
+    parser.add_argument('--env-file', type=str, help='自定义.env文件路径')
+    parser.add_argument('--show-config', action='store_true', help='显示配置信息')
     parser.add_argument("--no-intermediate", action="store_true", 
                        help="不保存中间结果")
     parser.add_argument("--verbose", action="store_true", 
@@ -530,14 +542,50 @@ def main():
     
     args = parser.parse_args()
     
+    print("="*60)
+    print("金融知识图谱构建工具")
+    print("="*60)
+    
+    # 加载配置（如果指定了自定义env文件）
+    if args.env_file:
+        config_loaded = load_configuration(args.env_file)
+        if not config_loaded:
+            print(f"⚠️  加载自定义配置文件失败: {args.env_file}")
+            sys.exit(1)
+    
+    # 显示配置信息
+    config_manager = get_config_manager()
+    if args.show_config:
+        print("配置信息:")
+        config_status = config_manager.get_configuration_status()
+        print(f"  配置加载状态: {'✅ 已加载' if config_status['is_loaded'] else '❌ 未加载'}")
+        print(f"  提供商数量: {config_status['providers_count']}")
+        print(f"  有效配置: {'✅ 是' if config_status['has_valid_config'] else '❌ 否'}")
+        if config_status['provider_models']:
+            print(f"  可用模型: {', '.join(config_status['provider_models'])}")
+        if config_status['load_errors']:
+            print(f"  加载错误: {config_status['load_errors']}")
+        print()
+    
     # 设置日志级别
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
+    # 构建Neo4j配置
+    neo4j_config = None
+    if args.enable_neo4j:
+        neo4j_config = {
+            'uri': args.neo4j_uri or os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
+            'user': args.neo4j_user or os.getenv('NEO4J_USER', 'neo4j'),
+            'password': args.neo4j_password or os.getenv('NEO4J_PASSWORD', 'password')
+        }
+    
     # 创建流水线
     pipeline = KnowledgeGraphPipeline(
         data_dir=args.data_dir,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        enable_neo4j=args.enable_neo4j,
+        neo4j_config=neo4j_config
     )
     
     # 运行完整的流水线
