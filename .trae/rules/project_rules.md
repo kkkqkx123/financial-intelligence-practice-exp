@@ -12,3 +12,13 @@ src\dataset\investment_structure.md
 
 **注意**
 代码必须使用csv文件，而非md演示文件。csv文件都已存在，你可以使用命令确认。但使用工具查看时这些csv文件是不可见的
+
+**NEO4J**
+NEO4J位于docker，将7473、7474端口映射到
+数据库名称为neo4j
+用户名为neo4j
+密码为1234567kk
+
+由于neo4j使用社区版，只能操作neo4j数据库，无法新建数据库。
+数据库数据在容器中的路径为/data/databases/neo4j与/data/transactions/neo4j
+需要清空数据需要使用docker exec，使用rm -rf删除这2个目录(只能删除这2个目录)，再次尝试连接时会自动新建该数据库
