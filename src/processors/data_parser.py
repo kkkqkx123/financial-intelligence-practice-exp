@@ -50,16 +50,16 @@ class DataParser:
                 try:
                     if isinstance(item, dict):
                         company = {
-                            'short_name': item.get('名称', item.get('short_name', item.get('name', ''))).strip(),
-                            'full_name': item.get('公司名称', item.get('full_name', item.get('name', ''))).strip(),
-                            'description': item.get('公司介绍', item.get('description', '')).strip(),
-                            'registration_name': item.get('工商', item.get('registration_name', item.get('name', ''))).strip(),
+                            'short_name': (item.get('名称', item.get('short_name', item.get('name', ''))) or '').strip(),
+                            'full_name': (item.get('公司名称', item.get('full_name', item.get('name', ''))) or '').strip(),
+                            'description': (item.get('公司介绍', item.get('description', '')) or '').strip(),
+                            'registration_name': (item.get('工商', item.get('registration_name', item.get('name', ''))) or '').strip(),
                             'address': item.get('地址') or item.get('contact_info', {}).get('address'),
-                            'registration_id': item.get('工商注册id', item.get('registration_id', '')).strip(),
+                            'registration_id': (item.get('工商注册id', item.get('registration_id', '')) or '').strip(),
                             'establish_date': item.get('成立时间', item.get('establish_date') or item.get('registration_date')),
-                            'legal_representative': item.get('法人代表', item.get('legal_representative', '')).strip(),
+                            'legal_representative': (item.get('法人代表', item.get('legal_representative', '')) or '').strip(),
                             'registered_capital': item.get('注册资金', item.get('registered_capital')),
-                            'credit_code': item.get('统一信用代码', item.get('credit_code', '')).strip(),
+                            'credit_code': (item.get('统一信用代码', item.get('credit_code', '')) or '').strip(),
                             'website': item.get('网址', item.get('website')),
                             'parsed_by': 'hardcoded',
                             'parse_confidence': 1.0
@@ -152,10 +152,29 @@ class DataParser:
             for item in data:
                 try:
                     if isinstance(item, dict):
+                        # 处理投资方字段，确保返回列表
+                        investors = item.get('投资方', item.get('investors', item.get('investment_partners', [])))
+                        if investors is None:
+                            investors = []
+                        elif isinstance(investors, str):
+                            # 如果是字符串，尝试解析为列表
+                            investors = self._parse_investors(investors)
+                        elif not isinstance(investors, list):
+                            # 其他类型转换为字符串再解析
+                            investors = self._parse_investors(str(investors))
+                        
+                        # 处理融资方字段，确保返回字符串
+                        investee = item.get('融资方', item.get('investee', item.get('company', '')))
+                        if investee is None:
+                            investee = ''
+                        elif not isinstance(investee, str):
+                            investee = str(investee)
+                        investee = investee.strip()
+                        
                         event = {
-                            'description': item.get('事件资讯', item.get('description', item.get('event', ''))).strip(),
-                            'investors': item.get('投资方', item.get('investors', item.get('investment_partners', []))),
-                            'investee': item.get('融资方', item.get('investee', item.get('company', ''))).strip(),
+                            'description': (item.get('事件资讯', item.get('description', item.get('event', ''))) or '').strip(),
+                            'investors': investors,
+                            'investee': investee,
                             'investment_date': item.get('融资时间', item.get('investment_date') or item.get('date')),
                             'round': item.get('轮次', item.get('round', item.get('funding_round', ''))),
                             'amount': item.get('金额', item.get('amount', item.get('funding_amount'))),

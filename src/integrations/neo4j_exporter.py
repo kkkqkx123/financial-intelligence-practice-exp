@@ -18,7 +18,15 @@ except ImportError:
     NEO4J_AVAILABLE = False
     logging.warning("py2neo库未安装，Neo4j功能将不可用")
 
-from processors.config import LOGGING_CONFIG
+try:
+    from processors.config import LOGGING_CONFIG
+except ImportError:
+    # 如果无法导入，使用默认配置
+    LOGGING_CONFIG = {
+        'level': 'INFO',
+        'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        'datefmt': '%Y-%m-%d %H:%M:%S'
+    }
 
 # 配置日志
 logging.basicConfig(
@@ -37,7 +45,7 @@ class Neo4jConfig:
     """Neo4j连接配置"""
     uri: str = "bolt://localhost:7687"
     username: str = "neo4j"
-    password: str = "password"
+    password: str = "1234567kk"  # 更新为正确的密码
     database: str = "neo4j"
 
 
@@ -165,6 +173,20 @@ class Neo4jKnowledgeGraphExporter:
                     logger.debug(f"投资方已存在，跳过: {investor_data.get('name', investor_id)}")
                     continue
                 
+                # 处理投资偏好数据
+                investment_focus = investor_data.get('investment_focus', {})
+                if isinstance(investment_focus, list):
+                    # 如果investment_focus是列表，直接作为投资领域
+                    industries = investment_focus
+                    stages = []
+                elif isinstance(investment_focus, dict):
+                    # 如果investment_focus是字典，提取industries和stages
+                    industries = investment_focus.get('industries', [])
+                    stages = investment_focus.get('stages', [])
+                else:
+                    industries = []
+                    stages = []
+                
                 # 创建节点属性
                 node_properties = {
                     '投资方ID': investor_id,
@@ -172,8 +194,8 @@ class Neo4jKnowledgeGraphExporter:
                     '投资方类型': investor_data.get('type', ''),
                     '管理资金规模': investor_data.get('managed_capital', ''),
                     '成立时间': investor_data.get('establishment_date', ''),
-                    '投资领域': ','.join(investor_data.get('investment_focus', {}).get('industries', [])),
-                    '投资阶段': ','.join(investor_data.get('investment_focus', {}).get('stages', [])),
+                    '投资领域': ','.join(industries) if industries else '',
+                    '投资阶段': ','.join(stages) if stages else '',
                     '投资方简介': investor_data.get('description', ''),
                     '数据来源': '知识图谱构建系统',
                     '创建时间': datetime.now().isoformat()
@@ -372,9 +394,34 @@ class Neo4jKnowledgeGraphExporter:
         start_time = datetime.now()
         export_stats: Dict[str, Union[int, float]] = {}
         
-        companies = kg_data.get('companies', {})
-        investors = kg_data.get('investors', {})
-        relationships = kg_data.get('relationships', [])
+        # 处理不同格式的输入数据
+        companies_raw = kg_data.get('companies', [])
+        investors_raw = kg_data.get('investors', [])
+        relationships_raw = kg_data.get('relationships', [])
+        
+        # 如果数据是列表格式，转换为字典格式
+        if isinstance(companies_raw, list):
+            companies = {}
+            for company in companies_raw:
+                company_id = company.get('id') or company.get('name', '')
+                if company_id:
+                    companies[company_id] = company
+        else:
+            companies = companies_raw
+            
+        if isinstance(investors_raw, list):
+            investors = {}
+            for investor in investors_raw:
+                investor_id = investor.get('id') or investor.get('name', '')
+                if investor_id:
+                    investors[investor_id] = investor
+        else:
+            investors = investors_raw
+            
+        if isinstance(relationships_raw, list):
+            relationships = relationships_raw
+        else:
+            relationships = relationships_raw
         
         # 清除现有数据（可选）
         if clear_existing:
@@ -423,7 +470,7 @@ class Neo4jKnowledgeGraphExporter:
             investor_count = len(list(self.node_matcher.match("投资方")))
             industry_count = len(list(self.node_matcher.match("行业")))
             
-            # 关系统计
+            # 关系统统统
             rel_query = """
             MATCH ()-[r]->() 
             RETURN type(r) as relation_type, count(r) as count

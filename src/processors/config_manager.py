@@ -24,7 +24,6 @@ class LLMProviderConfig:
     max_tokens: int = 1000
     temperature: float = 0.1
     timeout: int = 30
-    weight: int = 1
     
     def validate(self) -> bool:
         """验证配置有效性"""
@@ -126,53 +125,26 @@ class ConfigManager:
         """解析LLM提供商配置"""
         self.providers.clear()
         
-        # 优先尝试新的多提供商格式
-        provider_index = 1
-        while True:
-            api_key = os.getenv(f'LLM_PROVIDER_{provider_index}_API_KEY')
-            if not api_key:
-                break
-            
+        # 从环境变量读取配置（单提供商格式）
+        api_key = os.getenv('LLM_API_KEY')
+        base_url = os.getenv('LLM_BASE_URL')
+        model = os.getenv('LLM_MODEL')
+        
+        if api_key and base_url and model:
             provider_config = LLMProviderConfig(
                 api_key=api_key,
-                base_url=os.getenv(f'LLM_PROVIDER_{provider_index}_BASE_URL', ''),
-                model=os.getenv(f'LLM_PROVIDER_{provider_index}_MODEL', ''),
-                max_tokens=int(os.getenv(f'LLM_PROVIDER_{provider_index}_MAX_TOKENS', '1000')),
-                temperature=float(os.getenv(f'LLM_PROVIDER_{provider_index}_TEMPERATURE', '0.1')),
-                timeout=int(os.getenv(f'LLM_PROVIDER_{provider_index}_TIMEOUT', '30')),
-                weight=int(os.getenv(f'LLM_PROVIDER_{provider_index}_WEIGHT', '1'))
+                base_url=base_url,
+                model=model,
+                max_tokens=int(os.getenv('LLM_MAX_TOKENS', '1000')),
+                temperature=float(os.getenv('LLM_TEMPERATURE', '0.1')),
+                timeout=int(os.getenv('LLM_TIMEOUT', '30'))
             )
             
-            # 验证必需字段
             if provider_config.validate():
                 self.providers.append(provider_config)
-                logger.debug(f"添加提供商 {provider_index}: {provider_config.model}")
-            else:
-                logger.warning(f"提供商 {provider_index} 配置不完整，跳过")
-            
-            provider_index += 1
-        
-        # 如果没有新的格式配置，尝试旧的格式
-        if not self.providers:
-            api_key = os.getenv('LLM_API_KEY')
-            base_url = os.getenv('LLM_BASE_URL')
-            model = os.getenv('LLM_MODEL')
-            
-            if api_key and base_url and model:
-                provider_config = LLMProviderConfig(
-                    api_key=api_key,
-                    base_url=base_url,
-                    model=model,
-                    max_tokens=int(os.getenv('LLM_MAX_TOKENS', '1000')),
-                    temperature=float(os.getenv('LLM_TEMPERATURE', '0.1')),
-                    timeout=int(os.getenv('LLM_TIMEOUT', '30'))
-                )
-                
-                if provider_config.validate():
-                    self.providers.append(provider_config)
-                    logger.info("使用旧的配置格式添加提供商")
-            else:
-                logger.warning("未找到有效的LLM提供商配置")
+                logger.info("使用单提供商配置格式添加提供商")
+        else:
+            logger.warning("未找到有效的LLM提供商配置")
     
     def _validate_configuration(self) -> None:
         """验证配置有效性"""
@@ -226,12 +198,6 @@ class ConfigManager:
             return self.providers[0].temperature
         return 0.1
     
-    def get_weight(self) -> int:
-        """获取权重（主配置）"""
-        if self.providers:
-            return self.providers[0].weight
-        return 1
-    
     def is_config_loaded(self) -> bool:
         """检查配置是否已加载"""
         return self.is_loaded
@@ -241,12 +207,12 @@ class ConfigManager:
         return str(self.env_file_path)
     
     def get_primary_provider(self) -> Optional[LLMProviderConfig]:
-        """获取主要提供商配置（权重最高的）"""
+        """获取主要提供商配置"""
         if not self.providers:
             return None
         
-        # 返回权重最高的提供商
-        return max(self.providers, key=lambda p: p.weight)
+        # 返回第一个提供商
+        return self.providers[0]
     
     def get_provider_by_model(self, model: str) -> Optional[LLMProviderConfig]:
         """根据模型名称获取提供商配置"""
@@ -254,22 +220,6 @@ class ConfigManager:
             if provider.model == model:
                 return provider
         return None
-    
-    def get_llm_configs(self) -> List[Dict[str, Any]]:
-        """获取LLM配置列表（用于llm_client.py兼容）"""
-        configs = []
-        for provider in self.providers:
-            config = {
-                'api_key': provider.api_key,
-                'base_url': provider.base_url,
-                'model': provider.model,
-                'max_tokens': provider.max_tokens,
-                'temperature': provider.temperature,
-                'timeout': provider.timeout,
-                'weight': provider.weight
-            }
-            configs.append(config)
-        return configs
     
     def has_valid_configuration(self) -> bool:
         """检查是否有有效的配置"""
