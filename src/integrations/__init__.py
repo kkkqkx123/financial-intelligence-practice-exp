@@ -2,7 +2,7 @@
 # 用于集成外部系统和服务
 
 try:
-    from .neo4j_exporter import Neo4jKnowledgeGraphExporter, Neo4jConfig
-    __all__ = ['Neo4jKnowledgeGraphExporter', 'Neo4jConfig']
+    from .neo4j_exporter import KnowledgeGraphExporter, Config, IntegrationManager
+    __all__ = ['KnowledgeGraphExporter', 'Config', 'IntegrationManager']
 except ImportError:
     __all__ = []

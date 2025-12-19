@@ -41,18 +41,18 @@ logger.setLevel(logging.WARNING)
 
 
 @dataclass
-class Neo4jConfig:
-    """Neo4j连接配置"""
+class Config:
+    """连接配置"""
     uri: str = "bolt://localhost:7687"
     username: str = "neo4j"
     password: str = "1234567kk"  # 更新为正确的密码
     database: str = "neo4j"
 
 
-class Neo4jKnowledgeGraphExporter:
-    """Neo4j知识图谱导出器"""
+class KnowledgeGraphExporter:
+    """知识图谱导出器"""
     
-    def __init__(self, config: Neo4jConfig):
+    def __init__(self, config: Config):
         self.config = config
         self.graph: Optional[Graph] = None
         self.node_matcher: Optional[NodeMatcher] = None
@@ -278,8 +278,21 @@ class Neo4jKnowledgeGraphExporter:
         
         try:
             for rel in relationships:
-                investor_id = rel.get('investor_id')
-                company_id = rel.get('company_id')
+                # 处理Relation对象或字典对象
+                if hasattr(rel, 'source'):  # Relation对象
+                    investor_id = rel.source
+                    company_id = rel.target
+                    amount = rel.properties.get('amount', '')
+                    round_type = rel.properties.get('round', '')
+                    date = rel.properties.get('date', '')
+                    ratio = rel.properties.get('ratio', '')
+                else:  # 字典对象
+                    investor_id = rel.get('investor_id')
+                    company_id = rel.get('company_id')
+                    amount = rel.get('amount', '')
+                    round_type = rel.get('round', '')
+                    date = rel.get('date', '')
+                    ratio = rel.get('ratio', '')
                 
                 if not investor_id or not company_id:
                     logger.warning(f"关系缺少必要的ID: {rel}")
@@ -303,10 +316,10 @@ class Neo4jKnowledgeGraphExporter:
                 
                 # 创建关系属性
                 rel_properties = {
-                    '投资金额': rel.get('amount', ''),
-                    '投资轮次': rel.get('round', ''),
-                    '投资时间': rel.get('date', ''),
-                    '投资比例': rel.get('ratio', ''),
+                    '投资金额': amount,
+                    '投资轮次': round_type,
+                    '投资时间': date,
+                    '投资比例': ratio,
                     '数据来源': '知识图谱构建系统',
                     '创建时间': datetime.now().isoformat()
                 }
@@ -498,19 +511,19 @@ class Neo4jKnowledgeGraphExporter:
             # py2neo会自动管理连接，这里不需要特别处理
 
 
-class KnowledgeGraphIntegrationManager:
-    """知识图谱集成管理器"""
+class IntegrationManager:
+    """集成管理器"""
     
-    def __init__(self, neo4j_config: Optional[Neo4jConfig] = None):
-        self.neo4j_config = neo4j_config or Neo4jConfig()
-        self.exporter: Optional[Neo4jKnowledgeGraphExporter] = None
+    def __init__(self, neo4j_config: Optional[Config] = None):
+        self.neo4j_config = neo4j_config or Config()
+        self.exporter: Optional[KnowledgeGraphExporter] = None
         self._initialize_exporter()
     
     def _initialize_exporter(self):
         """初始化导出器"""
         if NEO4J_AVAILABLE:
             try:
-                self.exporter = Neo4jKnowledgeGraphExporter(self.neo4j_config)
+                self.exporter = KnowledgeGraphExporter(self.neo4j_config)
                 logger.info("Neo4j导出器初始化成功")
             except Exception as e:
                 logger.warning(f"Neo4j导出器初始化失败: {e}")
@@ -569,13 +582,13 @@ def main():
     print("="*50)
     
     # 创建集成管理器
-    config = Neo4jConfig(
+    config = Config(
         uri="bolt://localhost:7687",
         username="neo4j",
         password="password"  # 请根据实际情况修改
     )
     
-    manager = KnowledgeGraphIntegrationManager(config)
+    manager = IntegrationManager(config)
     
     # 检查集成状态
     status = manager.get_integration_status()

@@ -25,11 +25,11 @@ config_loaded = load_configuration()
 if not config_loaded:
     print("⚠️  配置加载失败，将使用默认配置")
 
-from processors import DataParser, EntityMatcher, HybridKGBuilder, DataValidator, BatchOptimizer
+from processors import DataParser, EntityMatcher, KGBuilder, DataValidator, OptimizedBatchProcessor
 from processors.config import LOGGING_CONFIG
 
 try:
-    from integrations.neo4j_exporter import KnowledgeGraphIntegrationManager, Neo4jConfig
+    from integrations.neo4j_exporter import IntegrationManager, Config
     NEO4J_INTEGRATION_AVAILABLE = True
 except ImportError:
     NEO4J_INTEGRATION_AVAILABLE = False
@@ -51,24 +51,24 @@ logger = get_logger('financial_kg')
 logger.setLevel(logging.WARNING)
 
 
-class KnowledgeGraphPipeline:
-    """知识图谱构建流水线"""
+class Pipeline:
+    """构建流水线"""
     
     def __init__(self, data_dir: str = "dataset", output_dir: str = "output", 
                  enable_neo4j: bool = False, neo4j_config: Optional[Dict[str, Any]] = None):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.parser = DataParser()
-        self.builder = HybridKGBuilder()
+        self.builder = KGBuilder()
         self.validator = DataValidator()
-        self.optimizer = BatchOptimizer()
+        self.optimizer = OptimizedBatchProcessor()
         
         # Neo4j集成
         self.enable_neo4j = enable_neo4j and NEO4J_INTEGRATION_AVAILABLE
-        self.neo4j_manager: Optional[KnowledgeGraphIntegrationManager] = None
+        self.neo4j_manager: Optional[IntegrationManager] = None
         if self.enable_neo4j:
-            neo4j_config_obj = Neo4jConfig(**(neo4j_config or {}))
-            self.neo4j_manager = KnowledgeGraphIntegrationManager(neo4j_config_obj)
+            neo4j_config_obj = Config(**(neo4j_config or {}))
+            self.neo4j_manager = IntegrationManager(neo4j_config_obj)
             logger.info("Neo4j集成已启用")
         
         # 确保输出目录存在
@@ -90,7 +90,8 @@ class KnowledgeGraphPipeline:
         data_file_mappings = {
             'companies': ['company_data.csv', 'company_data.md'],
             'investment_events': ['investment_events.csv', 'investment_events.md'],
-            'investors': ['investment_structure.csv', 'investment_structure.md']
+            'investors': ['investment_structure.csv', 'investment_structure.md'],
+            'investment_structures': ['investment_structure.csv', 'investment_structure.md']
         }
         
         loaded_data: Dict[str, List[Dict]] = {}
@@ -235,6 +236,11 @@ class KnowledgeGraphPipeline:
             parsed_data['investors'] = self.parser.parse_investment_institutions(raw_data['investors'])
             logger.info(f"投资方数据解析完成: {len(parsed_data['investors'])} 条")
         
+        # 解析投资结构数据
+        if 'investment_structures' in raw_data:
+            parsed_data['investment_structures'] = self.parser.parse_investment_structure(raw_data['investment_structures'])
+            logger.info(f"投资结构数据解析完成: {len(parsed_data['investment_structures'])} 条")
+        
         stage_time = (datetime.now() - stage_start).total_seconds()
         self.pipeline_stats['stage_stats']['data_parsing'] = {
             'duration': stage_time,
@@ -253,6 +259,7 @@ class KnowledgeGraphPipeline:
         companies_raw = parsed_data.get('companies', [])
         investment_events_raw = parsed_data.get('investment_events', [])
         investors_raw = parsed_data.get('investors', [])
+        investment_structures_raw = parsed_data.get('investment_structures', [])
 
         company_validation = self.validator.validate_company_data(companies_raw)
         logger.info(f"公司数据验证：{company_validation['valid_records']}/{company_validation['total_records']} 有效")
@@ -262,15 +269,29 @@ class KnowledgeGraphPipeline:
 
         investor_validation = self.validator.validate_investor_data(investors_raw)
         logger.info(f"投资方数据验证：{investor_validation['valid_records']}/{investor_validation['total_records']} 有效")
+        
+        structure_validation = self.validator.validate_investment_structure_data(investment_structures_raw)
+        logger.info(f"投资结构数据验证：{structure_validation['valid_records']}/{structure_validation['total_records']} 有效")
 
         # 步骤2：构建实体
         logger.info("步骤2：构建实体...")
         companies = self.builder.build_company_entities(companies_raw)
         investors = self.builder.build_investor_entities(investors_raw)
         
+        # 对投资事件数据进行解析和字段映射
+        logger.info("解析投资事件数据...")
+        investment_events = self.parser.parse_investment_events(investment_events_raw)
+        
         # 构建投资关系
-        self.builder.build_investment_relationships(investment_events_raw)
+        self.builder.build_investment_relationships(investment_events)
         relationships = self.builder.knowledge_graph['relationships']
+        
+        # 构建投资结构关系
+        if investment_structures_raw:
+            self.builder.build_investment_structure_relationships(investment_structures_raw)
+            # 合并投资结构关系到现有关系
+            structure_relationships = self.builder.knowledge_graph.get('structure_relationships', [])
+            relationships.extend(structure_relationships)
 
         # 步骤3：LLM增强优化
         logger.info("步骤3：LLM增强优化...")
@@ -549,6 +570,13 @@ class KnowledgeGraphPipeline:
             logger.error(f"知识图谱构建失败: {e}")
             self.pipeline_stats['end_time'] = datetime.now().isoformat()
             
+            # 只有当start_time不为None时才计算总处理时间
+            if self.pipeline_stats.get('start_time') is not None:
+                start_time = datetime.fromisoformat(self.pipeline_stats['start_time'])
+                end_time = datetime.fromisoformat(self.pipeline_stats['end_time'])
+                total_time: float = (end_time - start_time).total_seconds()
+                self.pipeline_stats['total_processing_time'] = total_time
+            
             return {
                 'success': False,
                 'error': str(e),
@@ -614,7 +642,7 @@ def main():
         }
     
     # 创建流水线
-    pipeline = KnowledgeGraphPipeline(
+    pipeline = Pipeline(
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         enable_neo4j=args.enable_neo4j,

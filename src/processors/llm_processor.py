@@ -1,843 +1,733 @@
 """
-LLM处理器 - 业务逻辑处理模块
-负责处理LLM相关的业务逻辑，与客户端连接分离
+简化的LLM实体抽取处理器
+
+专注于从金融投资文本中提取实体和关系，移除了多余的增强功能
 """
 
 import json
-import time
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, cast
 import logging
-import os
-from .llm_client import get_llm_client, LLMClientInterface
+import re
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass
+from datetime import datetime
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
 
 # 配置日志
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 设置日志级别为WARNING，减少INFO级别的日志输出
-logger.setLevel(logging.WARNING)
+
+@dataclass
+class Entity:
+    """实体数据类"""
+    id: str
+    name: str
+    type: str  # 'company' 或 'investor'
+    aliases: List[str] = None
+    properties: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.aliases is None:
+            self.aliases = []
+        if self.properties is None:
+            self.properties = {}
 
 
-class LLMProcessorInterface(ABC):
-    """LLM处理器接口 - 定义业务逻辑处理方法"""
+@dataclass
+class Relation:
+    """关系数据类"""
+    id: str
+    source: str  # 源实体ID
+    target: str  # 目标实体ID
+    type: str  # 关系类型，如 'invests_in'
+    properties: Dict[str, Any] = None
     
-    @abstractmethod
-    def enhance_entity_description(self, entity_name: str, context: Dict[str, Any]) -> str:
-        """增强实体描述"""
-        pass
-    
-    @abstractmethod
-    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
-        """解决实体冲突"""
-        pass
-    
-    @abstractmethod
-    def extract_relationships_from_text(self, text: str) -> List[Dict]:
-        """从文本中提取关系"""
-        pass
-    
-    @abstractmethod
-    def classify_company_industry(self, company_info: Dict) -> List[str]:
-        """分类公司行业"""
-        pass
-    
-    @abstractmethod
-    def standardize_investor_name(self, investor_name: str, context: Dict) -> str:
-        """标准化投资方名称"""
-        pass
+    def __post_init__(self):
+        if self.properties is None:
+            self.properties = {}
 
 
-class MockLLMProcessor(LLMProcessorInterface):
-    """模拟LLM处理器（用于开发和测试）"""
+@dataclass
+class ExtractionRequest:
+    """抽取请求数据类"""
+    id: str
+    text: str
+    request_type: str  # 'entity', 'relation', 'attribute'
+    context: Dict[str, Any] = None
+    priority: int = 0  # 优先级，数字越大优先级越高
     
-    def __init__(self):
-        self.call_count = 0
-        self.mock_responses = {
-            'enhance_entity_description': "这是一个经过LLM增强的实体描述。",
-            'resolve_entity_conflicts': {'resolved_entity': '统一实体', 'confidence': 0.9},
-            'extract_relationships_from_text': [],
-            'classify_company_industry': ['科技', '金融'],
-            'standardize_investor_name': '标准化投资方名称'
-        }
-    
-    def enhance_entity_description(self, entity_name: str, context: Dict[str, Any]) -> str:
-        """增强实体描述（模拟实现）"""
-        self.call_count += 1
-        logger.info(f"[MOCK] 增强实体描述: {entity_name}")
-        
-        return f"{entity_name}是一家专注于{context.get('industry', '未知领域')}的公司，成立于{context.get('establish_date', '未知时间')}。"
-    
-    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
-        """解决实体冲突（模拟实现）"""
-        self.call_count += 1
-        logger.info(f"[MOCK] 解决实体冲突: {len(conflicting_entities)} 个冲突")
-        
-        if conflicting_entities:
-            # 选择置信度最高的实体
-            best_entity = max(conflicting_entities, key=lambda x: x.get('confidence', 0))
-            return {
-                'resolved_entity': best_entity,
-                'confidence': best_entity.get('confidence', 0),
-                'merged_aliases': [e.get('name') for e in conflicting_entities if e != best_entity]
-            }
-        
-        return cast(Dict[str, Any], self.mock_responses['resolve_entity_conflicts'])
-    
-    def extract_relationships_from_text(self, text: str) -> List[Dict]:
-        """从文本中提取关系（模拟实现）"""
-        self.call_count += 1
-        logger.info(f"[MOCK] 从文本提取关系: {text[:50]}...")
-        
-        # 简单的模式匹配模拟
-        relationships = []
-        
-        # 模拟投资关系提取
-        if '投资' in text or '融资' in text:
-            relationships.append({
-                'type': 'investment',
-                'confidence': 0.7,
-                'description': '模拟投资关系'
-            })
-        
-        return relationships
-    
-    def classify_company_industry(self, company_info: Dict) -> List[str]:
-        """分类公司行业（模拟实现）"""
-        self.call_count += 1
-        logger.info(f"[MOCK] 公司行业分类: {company_info.get('name', '未知公司')}")
-        
-        name = company_info.get('name', '')
-        description = company_info.get('description', '')
-        
-        # 基于关键词的简单分类模拟
-        industries = []
-        
-        tech_keywords = ['科技', '技术', '智能', '软件', '互联网', '数据', 'AI', '人工智能']
-        finance_keywords = ['金融', '银行', '投资', '理财', '支付', '保险']
-        healthcare_keywords = ['医疗', '健康', '生物', '医药']
-        
-        text = f"{name} {description}"
-        
-        if any(keyword in text for keyword in tech_keywords):
-            industries.append('科技')
-        
-        if any(keyword in text for keyword in finance_keywords):
-            industries.append('金融')
-        
-        if any(keyword in text for keyword in healthcare_keywords):
-            industries.append('医疗健康')
-        
-        if not industries:
-            industries.append('其他')
-        
-        return industries
-    
-    def standardize_investor_name(self, investor_name: str, context: Dict) -> str:
-        """标准化投资方名称（模拟实现）"""
-        self.call_count += 1
-        logger.info(f"[MOCK] 标准化投资方名称: {investor_name}")
-        
-        # 简单的标准化规则
-        standardized = investor_name.strip()
-        
-        # 移除常见的后缀
-        suffixes = ['有限公司', '股份有限公司', '集团', '公司', '基金', '投资']
-        for suffix in suffixes:
-            if standardized.endswith(suffix) and len(standardized) > len(suffix):
-                # 保留部分后缀信息
-                break
-        
-        return standardized
-    
-    def get_stats(self) -> Dict[str, int]:
-        """获取调用统计"""
-        return cast(Dict[str, int], {
-            'total_calls': self.call_count,
-            'mock_responses': len(self.mock_responses)
-        })
+    def __post_init__(self):
+        if self.context is None:
+            self.context = {}
+        # 生成唯一ID
+        if not self.id:
+            self.id = hashlib.md5(f"{self.text}_{self.request_type}".encode()).hexdigest()
 
 
-class OpenAICompatibleProcessor(LLMProcessorInterface):
-    """OpenAI兼容处理器 - 使用真实的LLM客户端"""
+class TextPreprocessor:
+    """文本预处理器"""
     
-    def __init__(self, llm_client: Optional[LLMClientInterface] = None):
-        self.llm_client = llm_client or get_llm_client()
-        self.call_count = 0
-        logger.info("初始化OpenAI兼容处理器")
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """标准化文本"""
+        if not text:
+            return ""
+        
+        # 去除多余空白字符
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 去除特殊字符但保留中文、英文、数字和基本标点
+        text = re.sub(r'[^\w\s\u4e00-\u9fff，。！？；：""''（）【】《》\-]', '', text)
+        
+        # 去除首尾空格
+        text = text.strip()
+        
+        return text
     
-    def enhance_entity_description(self, entity_name: str, context: Dict[str, Any]) -> str:
-        """增强实体描述（使用真实LLM）"""
-        self.call_count += 1
-        logger.info(f"[REAL] 增强实体描述: {entity_name}")
-        
-        prompt = f"""
-        请为以下实体生成详细的描述信息：
-        
-        实体名称：{entity_name}
-        上下文信息：{json.dumps(context, ensure_ascii=False, indent=2)}
-        
-        请提供一段简洁但全面的描述，包括公司的主要业务、特点和相关信息。
-        描述应该专业、准确，长度控制在100-200字之间。
-        """
-        
-        try:
-            response = self.llm_client.generate_response(prompt)
-            return response.strip()
-        except Exception as e:
-            logger.error(f"增强实体描述失败: {e}")
-            # 回退到简单的描述
-            return f"{entity_name}是一家专注于{context.get('industry', '未知领域')}的公司。"
-    
-    def resolve_entity_conflicts(self, conflicting_entities: List[Dict]) -> Dict[str, Any]:
-        """解决实体冲突（使用真实LLM）"""
-        self.call_count += 1
-        logger.info(f"[REAL] 解决实体冲突: {len(conflicting_entities)} 个冲突")
-        
-        if not conflicting_entities:
-            return {'resolved_entity': None, 'confidence': 0.0}
-        
-        prompt = f"""
-        请分析以下实体冲突并提供解决方案：
-        
-        冲突实体列表：
-        {json.dumps(conflicting_entities, ensure_ascii=False, indent=2)}
-        
-        请确定：
-        1. 这些实体是否代表同一个真实实体？
-        2. 如果是，哪个是最准确的标准名称？
-        3. 其他名称应该如何处理（作为别名还是错误）？
-        4. 提供一个统一的实体表示。
-        
-        请以JSON格式返回结果，包含resolved_entity、confidence和merged_aliases字段。
-        """
-        
-        try:
-            response = self.llm_client.generate_response(prompt)
-            # 尝试解析JSON响应
-            result = json.loads(response)
-            return result
-        except Exception as e:
-            logger.error(f"解决实体冲突失败: {e}")
-            # 回退到简单的解决方案
-            best_entity = max(conflicting_entities, key=lambda x: x.get('confidence', 0))
-            return {
-                'resolved_entity': best_entity,
-                'confidence': best_entity.get('confidence', 0),
-                'merged_aliases': [e.get('name') for e in conflicting_entities if e != best_entity]
-            }
-    
-    def extract_relationships_from_text(self, text: str) -> List[Dict]:
-        """从文本中提取关系（使用真实LLM）"""
-        self.call_count += 1
-        logger.info(f"[REAL] 从文本提取关系: {text[:100]}...")
-        
-        prompt = f"""
-        请从以下文本中提取实体之间的关系：
-        
-        文本内容：
-        {text}
-        
-        请识别文本中提到的所有实体（公司、人物、产品等）以及它们之间的关系。
-        关系类型可以包括：投资、合作、竞争、收购、子母公司等。
-        
-        请以JSON数组格式返回结果，每个关系包含以下字段：
-        - type: 关系类型
-        - entities: 涉及的实体列表
-        - confidence: 置信度（0-1）
-        - description: 关系描述
-        - metadata: 额外的元数据
-        """
-        
-        try:
-            response = self.llm_client.generate_response(prompt)
-            # 尝试解析JSON响应
-            relationships = json.loads(response)
-            return relationships if isinstance(relationships, list) else []
-        except Exception as e:
-            logger.error(f"提取关系失败: {e}")
-            # 回退到简单的模式匹配
-            relationships = []
-            if any(keyword in text for keyword in ['投资', '融资', '领投', '跟投']):
-                relationships.append({
-                    'type': 'investment',
-                    'confidence': 0.6,
-                    'description': '投资关系',
-                    'entities': [],
-                    'metadata': {}
-                })
-            return relationships
-    
-    def classify_company_industry(self, company_info: Dict) -> List[str]:
-        """分类公司行业（使用真实LLM）"""
-        self.call_count += 1
-        logger.info(f"[REAL] 公司行业分类: {company_info.get('name', '未知公司')}")
-        
-        prompt = f"""
-        请为以下公司进行行业分类：
-        
-        公司信息：
-        {json.dumps(company_info, ensure_ascii=False, indent=2)}
-        
-        请基于公司名称、描述、业务范围等信息，确定公司所属的行业类别。
-        请提供1-3个最相关的行业分类。
-        
-        请以JSON数组格式返回行业列表，例如：["科技", "金融", "医疗健康"]
-        """
-        
-        try:
-            response = self.llm_client.generate_response(prompt)
-            # 尝试解析JSON响应
-            industries = json.loads(response)
-            return industries if isinstance(industries, list) else []
-        except Exception as e:
-            logger.error(f"行业分类失败: {e}")
-            # 回退到基于关键词的分类
-            name = company_info.get('name', '')
-            description = company_info.get('description', '')
-            text = f"{name} {description}"
-            
-            industries = []
-            keywords_map = {
-                '科技': ['科技', '技术', '智能', '软件', '互联网', '数据', 'AI', '人工智能'],
-                '金融': ['金融', '银行', '投资', '理财', '支付', '保险'],
-                '医疗健康': ['医疗', '健康', '生物', '医药']
-            }
-            
-            for industry, keywords in keywords_map.items():
-                if any(keyword in text for keyword in keywords):
-                    industries.append(industry)
-            
-            return industries if industries else ['其他']
-    
-    def standardize_investor_name(self, investor_name: str, context: Dict) -> str:
-        """标准化投资方名称（使用真实LLM）"""
-        self.call_count += 1
-        logger.info(f"[REAL] 标准化投资方名称: {investor_name}")
-        
-        prompt = f"""
-        请标准化以下投资方名称：
-        
-        投资方名称：{investor_name}
-        上下文信息：{json.dumps(context, ensure_ascii=False, indent=2)}
-        
-        请提供该投资方的标准名称，移除不必要的后缀，统一格式。
-        例如：
-        - "深圳市腾讯计算机系统有限公司" -> "腾讯"
-        - "阿里巴巴（中国）网络技术有限公司" -> "阿里巴巴"
-        
-        请只返回标准化后的名称，不要包含其他内容。
-        """
-        
-        try:
-            response = self.llm_client.generate_response(prompt)
-            return response.strip()
-        except Exception as e:
-            logger.error(f"标准化投资方名称失败: {e}")
-            # 回退到简单的标准化
-            return investor_name.strip()
-    
-    def get_stats(self) -> Dict[str, int]:
-        """获取调用统计"""
-        return cast(Dict[str, int], {
-            'total_calls': self.call_count
-        })
-
-
-class BatchLLMProcessor(OpenAICompatibleProcessor):
-    """批量LLM处理器 - 支持一次性处理多条数据"""
-    
-    def __init__(self, batch_size: int = 50, llm_client: Optional[LLMClientInterface] = None):
-        super().__init__(llm_client)
-        self.batch_size = batch_size
-        self.batch_call_count = 0
-        logger.info(f"初始化批量LLM处理器，批量大小: {batch_size}")
-    
-    def batch_enhance_entity_descriptions(self, entities: List[Dict[str, Any]]) -> List[str]:
-        """批量增强实体描述"""
-        if not entities:
-            return []
-        
-        self.batch_call_count += 1
-        logger.info(f"[BATCH] 批量增强实体描述: {len(entities)} 个实体")
-        
-        # 构建批量提示词
-        batch_prompt = self._build_batch_prompt_for_descriptions(entities)
-        
-        try:
-            # 使用真实LLM客户端进行批量处理
-            response = self.llm_client.generate_response(
-                prompt=batch_prompt,
-                system_prompt="你是一个专业的企业信息分析师，请为给定的实体生成详细描述。"
-            )
-            
-            # 解析批量响应
-            try:
-                result = json.loads(response)
-                if 'descriptions' in result and isinstance(result['descriptions'], list):
-                    descriptions = result['descriptions']
-                    # 确保返回的描述数量与输入实体数量一致
-                    if len(descriptions) == len(entities):
-                        return descriptions
-                    else:
-                        logger.warning(f"批量描述数量不匹配: 期望 {len(entities)}, 实际 {len(descriptions)}")
-            except json.JSONDecodeError:
-                logger.warning("无法解析批量描述的JSON响应，使用回退方法")
-            
-        except Exception as e:
-            logger.error(f"批量增强实体描述失败: {e}")
-        
-        # 回退到逐个处理
-        enhanced_descriptions = []
-        for entity in entities:
-            name = entity.get('name', '未知实体')
-            context = entity.get('context', {})
-            description = self.enhance_entity_description(name, context)
-            enhanced_descriptions.append(description)
-        
-        return enhanced_descriptions
-    
-    def batch_resolve_entity_conflicts(self, conflict_groups: List[List[Dict]]) -> List[Dict[str, Any]]:
-        """批量解决实体冲突"""
-        if not conflict_groups:
-            return []
-        
-        self.batch_call_count += 1
-        logger.info(f"[BATCH] 批量解决实体冲突: {len(conflict_groups)} 个冲突组")
-        
-        # 构建批量提示词
-        batch_prompt = self._build_batch_prompt_for_conflicts(conflict_groups)
-        
-        try:
-            # 使用真实LLM客户端进行批量处理
-            response = self.llm_client.generate_response(
-                prompt=batch_prompt,
-                system_prompt="你是一个专业的数据分析师，请解决给定的实体冲突问题。"
-            )
-            
-            # 解析批量响应
-            try:
-                result = json.loads(response)
-                if 'conflict_resolutions' in result and isinstance(result['conflict_resolutions'], list):
-                    resolutions = result['conflict_resolutions']
-                    # 确保返回的解决数量与输入冲突组数量一致
-                    if len(resolutions) == len(conflict_groups):
-                        return resolutions
-                    else:
-                        logger.warning(f"批量冲突解决数量不匹配: 期望 {len(conflict_groups)}, 实际 {len(resolutions)}")
-            except json.JSONDecodeError:
-                logger.warning("无法解析批量冲突解决的JSON响应，使用回退方法")
-            
-        except Exception as e:
-            logger.error(f"批量解决实体冲突失败: {e}")
-        
-        # 回退到逐个处理
-        results = []
-        for conflict_group in conflict_groups:
-            if conflict_group:
-                result = self.resolve_entity_conflicts(conflict_group)
-                results.append(result)
-            else:
-                results.append({'resolved_entity': None, 'confidence': 0.0})
-        
-        return results
-    
-    def batch_extract_relationships_from_text(self, texts: List[str]) -> List[List[Dict]]:
-        """批量从文本中提取关系"""
-        if not texts:
-            return []
-        
-        self.batch_call_count += 1
-        logger.info(f"[BATCH] 批量提取关系: {len(texts)} 段文本")
-        
-        relationships_list = []
-        for text in texts:
-            relationships = self.extract_relationships_from_text(text)
-            relationships_list.append(relationships)
-        
-        return relationships_list
-    
-    def batch_classify_company_industries(self, companies_info: List[Dict]) -> List[List[str]]:
-        """批量分类公司行业"""
-        if not companies_info:
-            return []
-        
-        self.batch_call_count += 1
-        logger.info(f"[BATCH] 批量行业分类: {len(companies_info)} 家公司")
-        
-        industries_list = []
-        for company_info in companies_info:
-            industries = self.classify_company_industry(company_info)
-            industries_list.append(industries)
-        
-        return industries_list
-    
-    def batch_standardize_investor_names(self, investor_names: List[str], contexts: List[Dict]) -> List[str]:
-        """批量标准化投资方名称"""
-        if not investor_names or not contexts:
-            return []
-        
-        self.batch_call_count += 1
-        logger.info(f"[BATCH] 批量标准化投资方名称: {len(investor_names)} 个名称")
-        
-        # 确保contexts长度与investor_names一致
-        if len(contexts) < len(investor_names):
-            contexts.extend([{}] * (len(investor_names) - len(contexts)))
-        
-        standardized_names = []
-        for i, name in enumerate(investor_names):
-            context = contexts[i] if i < len(contexts) else {}
-            standardized = self.standardize_investor_name(name, context)
-            standardized_names.append(standardized)
-        
-        return standardized_names
-    
-    def _build_batch_prompt_for_descriptions(self, entities: List[Dict[str, Any]]) -> str:
-        """构建批量实体描述的提示词"""
-        prompt_parts = []
-        prompt_parts.append("请为以下实体生成详细的描述信息：")
-        prompt_parts.append("")
-        
-        for i, entity in enumerate(entities, 1):
-            name = entity.get('name', '未知实体')
-            context = entity.get('context', {})
-            
-            prompt_parts.append(f"实体 {i}: {name}")
-            if context:
-                prompt_parts.append(f"  上下文信息: {json.dumps(context, ensure_ascii=False)}")
-            prompt_parts.append("")
-        
-        prompt_parts.append("请为每个实体生成一段详细的描述，描述应该包含公司的业务、特点、成立时间等信息。")
-        prompt_parts.append("请以JSON格式返回结果，格式如下：")
-        prompt_parts.append('{"descriptions": ["描述1", "描述2", ...]}')
-        
-        return "\n".join(prompt_parts)
-    
-    def _build_batch_prompt_for_conflicts(self, conflict_groups: List[List[Dict]]) -> str:
-        """构建批量冲突解决的提示词"""
-        prompt_parts = []
-        prompt_parts.append("请解决以下实体冲突组，判断每组中的实体是否代表同一个实体：")
-        prompt_parts.append("")
-        
-        for i, conflict_group in enumerate(conflict_groups, 1):
-            prompt_parts.append(f"冲突组 {i}:")
-            for j, entity in enumerate(conflict_group, 1):
-                name = entity.get('name', '未知实体')
-                description = entity.get('description', '')
-                context = entity.get('context', {})
-                
-                prompt_parts.append(f"  实体 {j}: {name}")
-                if description:
-                    prompt_parts.append(f"    描述: {description}")
-                if context:
-                    prompt_parts.append(f"    上下文: {json.dumps(context, ensure_ascii=False)}")
-            prompt_parts.append("")
-        
-        prompt_parts.append("对于每个冲突组，请判断这些实体是否代表同一个实体。")
-        prompt_parts.append("请以JSON格式返回结果，格式如下：")
-        prompt_parts.append('{"conflict_resolutions": [{"resolved_entity": {"name": "合并后的名称", "description": "合并后的描述"}, "confidence": 0.9}, ...]}')
-        prompt_parts.append("如果实体不冲突，confidence应该较低；如果确定是同一实体，confidence应该较高。")
-        
-        return "\n".join(prompt_parts)
-    
-    def process_in_batches(self, items: List[Any], batch_processor: callable) -> List[Any]:
-        """通用批量处理函数"""
-        if not items:
-            return []
-        
-        results = []
-        for i in range(0, len(items), self.batch_size):
-            batch = items[i:i + self.batch_size]
-            batch_results = batch_processor(batch)
-            results.extend(batch_results)
-        
-        return results
-    
-    def get_batch_stats(self) -> Dict[str, int]:
-        """获取批量处理统计"""
-        base_stats = self.get_stats()
-        base_stats['batch_calls'] = self.batch_call_count
-        base_stats['batch_size'] = self.batch_size
-        return base_stats
-
-
-# 全局实例
-mock_llm_processor = BatchLLMProcessor()
-
-
-class LLMEnhancementTracker:
-    """LLM增强需求跟踪器"""
-    
-    def __init__(self):
-        self.enhancement_requests = []
-        self.processed_requests = []
-        self.stats = {
-            'total_requests': 0,
-            'processed_requests': 0,
-            'pending_requests': 0
-        }
-    
-    def add_enhancement_request(self, request_type: str, data: Dict, priority: str = 'medium') -> str:
-        """添加增强请求"""
-        request_id = f"enh_{len(self.enhancement_requests) + 1:06d}"
-        
-        request = {
-            'id': request_id,
-            'type': request_type,
-            'data': data,
-            'priority': priority,
-            'status': 'pending',
-            'created_at': self._get_timestamp(),
-            'result': None
-        }
-        
-        self.enhancement_requests.append(request)
-        self.stats['total_requests'] += 1
-        self.stats['pending_requests'] += 1
-        
-        logger.info(f"添加LLM增强请求: {request_id} ({request_type})")
-        return request_id
-    
-    def get_pending_requests(self, request_type: Optional[str] = None, priority: Optional[str] = None) -> List[Dict]:
-        """获取待处理请求"""
-        pending = [req for req in self.enhancement_requests if req['status'] == 'pending']
-        
-        if request_type:
-            pending = [req for req in pending if req['type'] == request_type]
-        
-        if priority:
-            pending = [req for req in pending if req['priority'] == priority]
-        
-        return pending
-    
-    def process_batch_requests(self, llm_client: LLMProcessorInterface, batch_size: int = 50) -> Dict:
-        """批量处理请求"""
-        pending_requests = self.get_pending_requests()
-        
-        if not pending_requests:
-            return {'processed': 0, 'results': []}
-        
-        # 按优先级排序
-        priority_order = {'high': 0, 'medium': 1, 'low': 2}
-        pending_requests.sort(key=lambda x: priority_order.get(x['priority'], 1))
-        
-        # 分批处理
-        batch = pending_requests[:batch_size]
-        results = []
-        
-        logger.info(f"批量处理LLM请求: {len(batch)} 个请求")
-        
-        for request in batch:
-            try:
-                result = self._process_single_request(request, llm_client)
-                request['status'] = 'completed'
-                request['result'] = result
-                request['processed_at'] = self._get_timestamp()
-                
-                self.processed_requests.append(request)
-                results.append(result)
-                
-                self.stats['processed_requests'] += 1
-                self.stats['pending_requests'] -= 1
-                
-            except Exception as e:
-                logger.error(f"处理LLM请求失败: {request['id']}, 错误: {e}")
-                request['status'] = 'failed'
-                request['error'] = str(e)
-        
-        logger.info(f"批量处理完成: {len(results)} 个成功")
-        
-        return {
-            'processed': len(results),
-            'results': results,
-            'remaining': len(pending_requests) - len(batch)
-        }
-    
-    def process_batch_requests_smart(self, llm_processor: BatchLLMProcessor, batch_size: int = 50) -> Dict:
-        """智能批量处理请求 - 多条数据一次性处理"""
-        pending_requests = self.get_pending_requests()
-        
-        if not pending_requests:
-            return {'processed': 0, 'results': [], 'batches': 0}
-        
-        # 按类型分组
-        grouped_requests = self._group_requests_by_type(pending_requests)
-        
-        all_results = []
-        total_processed = 0
-        batch_count = 0
-        
-        # 按类型批量处理
-        for request_type, requests in grouped_requests.items():
-            if not requests:
+    @staticmethod
+    def segment_sentences(text: str, max_length: int = 500) -> List[str]:
+        """将长文本分割为句子或段落"""
+        if len(text) <= max_length:
+            return [text]
+        
+        # 按句号、问号、感叹号分割
+        sentences = re.split(r'[。！？]', text)
+        
+        # 合并短句，分割长句
+        segments = []
+        current_segment = ""
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
                 continue
-            
-            # 限制每批处理数量
-            batch_requests = requests[:batch_size]
-            
-            try:
-                batch_results = self._process_batch_by_type(batch_requests, request_type, llm_processor)
-                all_results.extend(batch_results)
-                total_processed += len(batch_results)
-                batch_count += 1
                 
-                # 更新请求状态
-                for i, request in enumerate(batch_requests):
-                    if i < len(batch_results):
-                        request['status'] = 'completed'
-                        request['result'] = batch_results[i]
-                        request['processed_at'] = self._get_timestamp()
-                        
-                        self.processed_requests.append(request)
-                        self.stats['processed_requests'] += 1
-                        self.stats['pending_requests'] -= 1
-                
-                logger.info(f"智能批量处理 {request_type}: {len(batch_results)} 个请求")
-                
-            except Exception as e:
-                logger.error(f"智能批量处理失败 {request_type}: {e}")
-                # 回退到单个处理
-                for request in batch_requests:
-                    try:
-                        result = self._process_single_request(request, llm_processor)
-                        request['status'] = 'completed'
-                        request['result'] = result
-                        request['processed_at'] = self._get_timestamp()
-                        
-                        self.processed_requests.append(request)
-                        all_results.append(result)
-                        
-                        self.stats['processed_requests'] += 1
-                        self.stats['pending_requests'] -= 1
-                        
-                        total_processed += 1
-                    except Exception as single_e:
-                        logger.error(f"单个处理也失败: {request['id']}, 错误: {single_e}")
-                        request['status'] = 'failed'
-                        request['error'] = str(single_e)
+            if len(current_segment + sentence) <= max_length:
+                current_segment += sentence + "。"
+            else:
+                if current_segment:
+                    segments.append(current_segment)
+                current_segment = sentence + "。"
         
-        return {
-            'processed': total_processed,
-            'results': all_results,
-            'batches': batch_count,
-            'remaining': len(pending_requests) - total_processed
-        }
+        if current_segment:
+            segments.append(current_segment)
+        
+        return segments
     
-    def _process_single_request(self, request: Dict, llm_client: LLMProcessorInterface) -> Any:
-        """处理单个请求"""
-        request_type = request['type']
-        data = request['data']
+    @staticmethod
+    def extract_keywords(text: str) -> List[str]:
+        """提取关键词，辅助实体识别"""
+        # 投资相关关键词
+        investment_keywords = [
+            "投资", "融资", "轮", "天使", "种子", "A轮", "B轮", "C轮", "D轮", 
+            "Pre-A", "Pre-IPO", "战略融资", "并购", "收购", "股权", "基金",
+            "创投", "资本", "风投", "机构", "领投", "跟投", "参投"
+        ]
         
-        if request_type == 'enhance_description':
-            return llm_client.enhance_entity_description(
-                data['entity_name'],
-                data.get('context', {})
-            )
+        # 公司相关关键词
+        company_keywords = [
+            "公司", "有限", "集团", "科技", "网络", "股份", "企业", "工作室"
+        ]
         
-        elif request_type == 'resolve_conflict':
-            return llm_client.resolve_entity_conflicts(data['conflicting_entities'])
+        # 提取包含关键词的片段
+        keywords = []
+        for keyword in investment_keywords + company_keywords:
+            if keyword in text:
+                keywords.append(keyword)
         
-        elif request_type == 'extract_relationships':
-            return llm_client.extract_relationships_from_text(data['text'])
-        
-        elif request_type == 'classify_industry':
-            return llm_client.classify_company_industry(data['company_info'])
-        
-        elif request_type == 'standardize_name':
-            return llm_client.standardize_investor_name(
-                data['investor_name'],
-                data.get('context', {})
-            )
-        
-        else:
-            raise ValueError(f"未知的请求类型: {request_type}")
+        return keywords
+
+
+class BatchProcessor:
+    """批量处理管理器"""
     
-    def _group_requests_by_type(self, requests: List[Dict]) -> Dict[str, List[Dict]]:
-        """按类型分组请求"""
-        groups = {
-            'enhance_description': [],
-            'resolve_conflict': [],
-            'extract_relationships': [],
-            'classify_industry': [],
-            'standardize_name': []
-        }
+    def __init__(self, max_batch_tokens: int = 3000):
+        self.max_batch_tokens = max_batch_tokens
+        self.cache = {}  # 简单的内存缓存
+    
+    def group_by_similarity(self, requests: List[ExtractionRequest], threshold: float = 0.8) -> List[List[ExtractionRequest]]:
+        """
+        基于文本相似度分组，简化实现
+        在实际应用中，可以使用文本嵌入向量计算相似度
+        """
+        groups = []
+        processed = set()
         
-        for request in requests:
-            request_type = request['type']
-            if request_type in groups:
-                groups[request_type].append(request)
+        for req in requests:
+            if req.id in processed:
+                continue
+                
+            # 创建新组
+            current_group = [req]
+            processed.add(req.id)
+            
+            # 查找相似请求
+            for other_req in requests:
+                if other_req.id in processed:
+                    continue
+                    
+                # 简单相似度计算：共同关键词比例
+                similarity = self._calculate_similarity(req.text, other_req.text)
+                
+                if similarity >= threshold and req.request_type == other_req.request_type:
+                    current_group.append(other_req)
+                    processed.add(other_req.id)
+            
+            groups.append(current_group)
         
         return groups
     
-    def _process_batch_by_type(self, requests: List[Dict], request_type: str, llm_processor: BatchLLMProcessor) -> List[Any]:
-        """按类型批量处理"""
-        if request_type == 'enhance_description':
-            entities = [{
-                'name': req['data']['entity_name'],
-                'context': req['data'].get('context', {})
-            } for req in requests]
-            return llm_processor.batch_enhance_entity_descriptions(entities)
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """计算两个文本的简单相似度"""
+        # 提取关键词
+        keywords1 = set(TextPreprocessor.extract_keywords(text1))
+        keywords2 = set(TextPreprocessor.extract_keywords(text2))
         
-        elif request_type == 'resolve_conflict':
-            conflict_groups = [req['data']['conflicting_entities'] for req in requests]
-            return llm_processor.batch_resolve_entity_conflicts(conflict_groups)
+        # 计算Jaccard相似度
+        if not keywords1 and not keywords2:
+            return 1.0
+        if not keywords1 or not keywords2:
+            return 0.0
+            
+        intersection = len(keywords1.intersection(keywords2))
+        union = len(keywords1.union(keywords2))
         
-        elif request_type == 'extract_relationships':
-            texts = [req['data']['text'] for req in requests]
-            return llm_processor.batch_extract_relationships_from_text(texts)
+        return intersection / union if union > 0 else 0.0
+    
+    def dynamic_batch_sizing(self, requests: List[ExtractionRequest]) -> List[List[ExtractionRequest]]:
+        """根据token数量动态调整批量大小"""
+        batches = []
+        current_batch = []
+        current_tokens = 0
         
-        elif request_type == 'classify_industry':
-            companies_info = [req['data']['company_info'] for req in requests]
-            return llm_processor.batch_classify_company_industries(companies_info)
+        for request in requests:
+            # 简单估算token数（实际应用中应使用tokenizer）
+            text_tokens = len(request.text) // 2  # 假设平均2个字符一个token
+            
+            if current_tokens + text_tokens > self.max_batch_tokens and current_batch:
+                batches.append(current_batch)
+                current_batch = [request]
+                current_tokens = text_tokens
+            else:
+                current_batch.append(request)
+                current_tokens += text_tokens
         
-        elif request_type == 'standardize_name':
-            investor_names = [req['data']['investor_name'] for req in requests]
-            contexts = [req['data'].get('context', {}) for req in requests]
-            return llm_processor.batch_standardize_investor_names(investor_names, contexts)
+        if current_batch:
+            batches.append(current_batch)
         
+        return batches
+    
+    def prioritize_requests(self, requests: List[ExtractionRequest]) -> List[ExtractionRequest]:
+        """按重要性排序处理请求"""
+        def priority_key(request: ExtractionRequest) -> Tuple[int, str]:
+            # 1. 知名投资机构优先
+            if self._contains_known_investor(request.text):
+                return (0, request.text)
+            # 2. 大额投资优先
+            if self._contains_large_investment(request.text):
+                return (1, request.text)
+            # 3. 其他
+            return (2, request.text)
+        
+        return sorted(requests, key=priority_key)
+    
+    def _contains_known_investor(self, text: str) -> bool:
+        """检查是否包含知名投资机构"""
+        known_investors = [
+            "红杉资本", "IDG资本", "经纬中国", "真格基金", "创新工场", 
+            "软银中国", "晨兴资本", "DCM", "高瓴资本", "君联资本"
+        ]
+        
+        return any(investor in text for investor in known_investors)
+    
+    def _contains_large_investment(self, text: str) -> bool:
+        """检查是否包含大额投资"""
+        large_investment_patterns = [
+            r'\d+亿', r'\d+千万', r'\d+hundred\s+million', 
+            r'\d+billion', r'\d+万\s*美元'
+        ]
+        
+        return any(re.search(pattern, text) for pattern in large_investment_patterns)
+
+
+class PromptTemplates:
+    """提示词模板"""
+    
+    ENTITY_RECOGNITION_TEMPLATE = """你是一个金融领域的实体识别专家。请从以下文本中识别所有公司名称和投资机构名称。
+
+要求：
+1. 只识别公司和投资机构，忽略其他类型的实体
+2. 返回JSON格式：{{"companies": [...], "investors": [...]}}
+3. 不要添加解释或额外信息
+4. 确保名称准确完整
+
+文本：{text}"""
+    
+    RELATION_EXTRACTION_TEMPLATE = """你是一个金融投资关系提取专家。请从以下文本中提取"投资方→被投公司"的关系。
+
+要求：
+1. 只提取投资关系，格式：(投资方) -> (被投公司)
+2. 返回JSON格式：{{"relations": [{{"investor": "...", "company": "..."}}]}}
+3. 不要添加解释或额外信息
+4. 确保关系准确
+
+文本：{text}"""
+    
+    ATTRIBUTE_EXTRACTION_TEMPLATE = """你是一个金融投资属性提取专家。请从以下文本中提取投资金额、轮次和时间信息。
+
+要求：
+1. 只提取金额、轮次和时间
+2. 返回JSON格式：{{"amount": "...", "round": "...", "date": "..."}}
+3. 如果信息不存在，使用null
+4. 不要添加解释或额外信息
+
+文本：{text}"""
+
+
+class ResultParser:
+    """结果解析器"""
+    
+    @staticmethod
+    def parse_json_response(response: str) -> Dict[str, Any]:
+        """解析JSON格式响应"""
+        try:
+            # 尝试直接解析
+            return json.loads(response)
+        except json.JSONDecodeError:
+            # 尝试修复常见JSON错误
+            fixed_response = ResultParser._fix_common_json_errors(response)
+            try:
+                return json.loads(fixed_response)
+            except json.JSONDecodeError:
+                # 如果仍然失败，返回空结果
+                logger.warning(f"无法解析JSON响应: {response}")
+                return {}
+    
+    @staticmethod
+    def _fix_common_json_errors(response: str) -> str:
+        """修复常见JSON错误"""
+        # 移除可能的前后缀文本
+        response = re.sub(r'^.*?{', '{', response)
+        response = re.sub(r'}.*?$', '}', response)
+        
+        # 替换单引号为双引号
+        response = response.replace("'", '"')
+        
+        # 修复可能的转义问题
+        response = response.replace('\\"', '"')
+        
+        return response
+    
+    @staticmethod
+    def validate_schema(data: Dict[str, Any], expected_keys: List[str]) -> bool:
+        """验证输出格式"""
+        if not isinstance(data, dict):
+            return False
+        
+        for key in expected_keys:
+            if key not in data:
+                return False
+        
+        return True
+    
+    @staticmethod
+    def regex_extract(response: str) -> Dict[str, Any]:
+        """使用正则表达式提取信息"""
+        result = {}
+        
+        # 提取公司名称
+        companies = re.findall(r'公司[：:]\s*([^,，\n]+)', response)
+        if companies:
+            result['companies'] = companies
+        
+        # 提取投资机构
+        investors = re.findall(r'投资机构[：:]\s*([^,，\n]+)', response)
+        if investors:
+            result['investors'] = investors
+        
+        # 提取关系
+        relations = re.findall(r'(\w+)\s*->\s*(\w+)', response)
+        if relations:
+            result['relations'] = [{'investor': inv, 'company': comp} for inv, comp in relations]
+        
+        return result
+
+
+class LLMClient:
+    """LLM客户端"""
+    
+    def __init__(self, api_key: str = None, base_url: str = None):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.executor = ThreadPoolExecutor(max_workers=5)
+    
+    async def generate_completion(self, prompt: str) -> str:
+        """生成LLM响应"""
+        # 这里应该是实际的API调用
+        # 为了演示，返回模拟响应
+        await asyncio.sleep(0.1)  # 模拟API延迟
+        
+        # 根据提示词类型返回不同的模拟响应
+        if "实体识别" in prompt:
+            return '{"companies": ["示例公司"], "investors": ["示例投资机构"]}'
+        elif "关系提取" in prompt:
+            return '{"relations": [{"investor": "示例投资机构", "company": "示例公司"}]}'
+        elif "属性提取" in prompt:
+            return '{"amount": "1000万", "round": "A轮", "date": "2023-01-01"}'
         else:
-            raise ValueError(f"不支持的批量处理类型: {request_type}")
+            return "{}"
     
-    def get_stats(self) -> Dict[str, int]:
-        """获取统计信息"""
-        return cast(Dict[str, int], self.stats.copy())
+    def handle_errors(self, error: Exception) -> Dict[str, Any]:
+        """处理API错误"""
+        logger.error(f"LLM API错误: {str(error)}")
+        return {"error": str(error)}
     
-    def export_pending_requests(self, filepath: str) -> None:
-        """导出待处理请求"""
-        pending = self.get_pending_requests()
+    async def retry_failed_requests(self, requests: List[Tuple[str, str]], max_retries: int = 3) -> List[Dict[str, Any]]:
+        """重试失败请求"""
+        results = []
         
-        export_data = {
-            'export_time': self._get_timestamp(),
-            'total_pending': len(pending),
-            'requests': pending
+        for request_id, prompt in requests:
+            success = False
+            result = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await self.generate_completion(prompt)
+                    result = ResultParser.parse_json_response(response)
+                    success = True
+                    break
+                except Exception as e:
+                    logger.warning(f"请求 {request_id} 第 {attempt + 1} 次尝试失败: {str(e)}")
+                    if attempt == max_retries - 1:
+                        result = self.handle_errors(e)
+            
+            results.append(result)
+        
+        return results
+
+
+class SimplifiedLLMProcessor:
+    """简化的LLM处理器"""
+    
+    def __init__(self, llm_client: LLMClient = None):
+        self.llm_client = llm_client or LLMClient()
+        self.text_preprocessor = TextPreprocessor()
+        self.batch_processor = BatchProcessor()
+        self.prompt_templates = PromptTemplates()
+        self.result_parser = ResultParser()
+        
+        # 统计信息
+        self.stats = {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "api_calls": 0,
+            "entities_extracted": 0,
+            "relations_extracted": 0
         }
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"导出待处理请求: {len(pending)} 个请求到 {filepath}")
     
-    def _get_timestamp(self) -> str:
-        """获取时间戳"""
-        from datetime import datetime
-        return datetime.now().isoformat()
+    async def extract_entities(self, texts: List[str]) -> List[Entity]:
+        """从文本列表中提取实体"""
+        # 创建实体识别请求
+        requests = []
+        for text in texts:
+            normalized_text = self.text_preprocessor.normalize_text(text)
+            if normalized_text:
+                request = ExtractionRequest(
+                    id="",  # 将自动生成
+                    text=normalized_text,
+                    request_type="entity"
+                )
+                requests.append(request)
+        
+        # 优先级排序
+        prioritized_requests = self.batch_processor.prioritize_requests(requests)
+        
+        # 按相似度分组
+        groups = self.batch_processor.group_by_similarity(prioritized_requests)
+        
+        # 处理每个组
+        all_entities = []
+        for group in groups:
+            # 动态批量大小调整
+            batches = self.batch_processor.dynamic_batch_sizing(group)
+            
+            for batch in batches:
+                batch_entities = await self._process_entity_batch(batch)
+                all_entities.extend(batch_entities)
+        
+        # 去重
+        unique_entities = self._deduplicate_entities(all_entities)
+        
+        # 更新统计
+        self.stats["total_requests"] += len(requests)
+        self.stats["entities_extracted"] += len(unique_entities)
+        
+        return unique_entities
+    
+    async def extract_relations(self, texts: List[str]) -> List[Relation]:
+        """从文本列表中提取关系"""
+        # 创建关系提取请求
+        requests = []
+        for text in texts:
+            normalized_text = self.text_preprocessor.normalize_text(text)
+            if normalized_text:
+                request = ExtractionRequest(
+                    id="",
+                    text=normalized_text,
+                    request_type="relation"
+                )
+                requests.append(request)
+        
+        # 优先级排序
+        prioritized_requests = self.batch_processor.prioritize_requests(requests)
+        
+        # 按相似度分组
+        groups = self.batch_processor.group_by_similarity(prioritized_requests)
+        
+        # 处理每个组
+        all_relations = []
+        for group in groups:
+            # 动态批量大小调整
+            batches = self.batch_processor.dynamic_batch_sizing(group)
+            
+            for batch in batches:
+                batch_relations = await self._process_relation_batch(batch)
+                all_relations.extend(batch_relations)
+        
+        # 去重
+        unique_relations = self._deduplicate_relations(all_relations)
+        
+        # 更新统计
+        self.stats["total_requests"] += len(requests)
+        self.stats["relations_extracted"] += len(unique_relations)
+        
+        return unique_relations
+    
+    async def extract_attributes(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """从文本列表中提取属性"""
+        # 创建属性抽取请求
+        requests = []
+        for text in texts:
+            normalized_text = self.text_preprocessor.normalize_text(text)
+            if normalized_text:
+                request = ExtractionRequest(
+                    id="",
+                    text=normalized_text,
+                    request_type="attribute"
+                )
+                requests.append(request)
+        
+        # 优先级排序
+        prioritized_requests = self.batch_processor.prioritize_requests(requests)
+        
+        # 按相似度分组
+        groups = self.batch_processor.group_by_similarity(prioritized_requests)
+        
+        # 处理每个组
+        all_attributes = []
+        for group in groups:
+            # 动态批量大小调整
+            batches = self.batch_processor.dynamic_batch_sizing(group)
+            
+            for batch in batches:
+                batch_attributes = await self._process_attribute_batch(batch)
+                all_attributes.extend(batch_attributes)
+        
+        # 更新统计
+        self.stats["total_requests"] += len(requests)
+        
+        return all_attributes
+    
+    async def _process_entity_batch(self, batch: List[ExtractionRequest]) -> List[Entity]:
+        """处理实体抽取批次"""
+        # 合并批次中的文本
+        combined_text = "\n".join([f"文本{i+1}: {req.text}" for i, req in enumerate(batch)])
+        
+        # 生成提示词
+        prompt = self.prompt_templates.ENTITY_RECOGNITION_TEMPLATE.format(text=combined_text)
+        
+        # 调用LLM
+        response = await self.llm_client.generate_completion(prompt)
+        self.stats["api_calls"] += 1
+        
+        # 解析结果
+        result = self.result_parser.parse_json_response(response)
+        
+        # 验证结果
+        if not self.result_parser.validate_schema(result, ["companies", "investors"]):
+            self.stats["failed_requests"] += len(batch)
+            return []
+        
+        # 转换为实体对象
+        entities = []
+        
+        # 处理公司实体
+        for company_name in result.get("companies", []):
+            entity = Entity(
+                id=hashlib.md5(f"company_{company_name}".encode()).hexdigest(),
+                name=company_name,
+                type="company"
+            )
+            entities.append(entity)
+        
+        # 处理投资机构实体
+        for investor_name in result.get("investors", []):
+            entity = Entity(
+                id=hashlib.md5(f"investor_{investor_name}".encode()).hexdigest(),
+                name=investor_name,
+                type="investor"
+            )
+            entities.append(entity)
+        
+        self.stats["successful_requests"] += len(batch)
+        return entities
+    
+    async def _process_relation_batch(self, batch: List[ExtractionRequest]) -> List[Relation]:
+        """处理关系抽取批次"""
+        # 合并批次中的文本
+        combined_text = "\n".join([f"文本{i+1}: {req.text}" for i, req in enumerate(batch)])
+        
+        # 生成提示词
+        prompt = self.prompt_templates.RELATION_EXTRACTION_TEMPLATE.format(text=combined_text)
+        
+        # 调用LLM
+        response = await self.llm_client.generate_completion(prompt)
+        self.stats["api_calls"] += 1
+        
+        # 解析结果
+        result = self.result_parser.parse_json_response(response)
+        
+        # 验证结果
+        if not self.result_parser.validate_schema(result, ["relations"]):
+            self.stats["failed_requests"] += len(batch)
+            return []
+        
+        # 转换为关系对象
+        relations = []
+        for rel_data in result.get("relations", []):
+            investor_name = rel_data.get("investor")
+            company_name = rel_data.get("company")
+            
+            if investor_name and company_name:
+                relation = Relation(
+                    id=hashlib.md5(f"{investor_name}_{company_name}".encode()).hexdigest(),
+                    source=hashlib.md5(f"investor_{investor_name}".encode()).hexdigest(),
+                    target=hashlib.md5(f"company_{company_name}".encode()).hexdigest(),
+                    type="invests_in",
+                    properties={"source_text": combined_text}
+                )
+                relations.append(relation)
+        
+        self.stats["successful_requests"] += len(batch)
+        return relations
+    
+    async def _process_attribute_batch(self, batch: List[ExtractionRequest]) -> List[Dict[str, Any]]:
+        """处理属性抽取批次"""
+        # 合并批次中的文本
+        combined_text = "\n".join([f"文本{i+1}: {req.text}" for i, req in enumerate(batch)])
+        
+        # 生成提示词
+        prompt = self.prompt_templates.ATTRIBUTE_EXTRACTION_TEMPLATE.format(text=combined_text)
+        
+        # 调用LLM
+        response = await self.llm_client.generate_completion(prompt)
+        self.stats["api_calls"] += 1
+        
+        # 解析结果
+        result = self.result_parser.parse_json_response(response)
+        
+        # 验证结果
+        if not self.result_parser.validate_schema(result, ["amount", "round", "date"]):
+            self.stats["failed_requests"] += len(batch)
+            return []
+        
+        # 为每个请求创建属性字典
+        attributes = []
+        for req in batch:
+            attr = {
+                "request_id": req.id,
+                "text": req.text,
+                "amount": result.get("amount"),
+                "round": result.get("round"),
+                "date": result.get("date")
+            }
+            attributes.append(attr)
+        
+        self.stats["successful_requests"] += len(batch)
+        return attributes
+    
+    def _deduplicate_entities(self, entities: List[Entity]) -> List[Entity]:
+        """去重实体列表"""
+        unique_entities = {}
+        
+        for entity in entities:
+            key = (entity.name.lower(), entity.type)
+            if key not in unique_entities:
+                unique_entities[key] = entity
+            else:
+                # 合并别名
+                existing = unique_entities[key]
+                for alias in entity.aliases:
+                    if alias not in existing.aliases:
+                        existing.aliases.append(alias)
+        
+        return list(unique_entities.values())
+    
+    def _deduplicate_relations(self, relations: List[Relation]) -> List[Relation]:
+        """去重关系列表"""
+        unique_relations = {}
+        
+        for relation in relations:
+            key = (relation.source, relation.target, relation.type)
+            if key not in unique_relations:
+                unique_relations[key] = relation
+        
+        return list(unique_relations.values())
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取处理统计信息"""
+        return self.stats.copy()
+    
+    def reset_stats(self) -> None:
+        """重置统计信息"""
+        self.stats = {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "api_calls": 0,
+            "entities_extracted": 0,
+            "relations_extracted": 0
+        }
 
 
-# 全局实例
-llm_enhancement_tracker = LLMEnhancementTracker()
+# 全局处理器实例
+_global_processor = None
 
 
-def get_llm_processor() -> LLMProcessorInterface:
-    """获取LLM处理器实例 - 使用OpenAI兼容客户端"""
-    llm_client = get_llm_client()
-    return OpenAICompatibleProcessor(llm_client)
+def get_llm_processor() -> SimplifiedLLMProcessor:
+    """获取全局LLM处理器实例"""
+    global _global_processor
+    if _global_processor is None:
+        _global_processor = SimplifiedLLMProcessor()
+    return _global_processor
 
 
-def get_enhancement_tracker() -> LLMEnhancementTracker:
-    """获取LLM增强跟踪器实例"""
-    return llm_enhancement_tracker
+async def extract_entities_from_texts(texts: List[str]) -> List[Entity]:
+    """从文本列表中提取实体的便捷函数"""
+    processor = get_llm_processor()
+    return await processor.extract_entities(texts)
 
 
-def get_batch_llm_processor() -> BatchLLMProcessor:
-    """获取批量LLM处理器实例 - 使用OpenAI兼容客户端"""
-    llm_client = get_llm_client()
-    return BatchLLMProcessor(llm_client=llm_client)
+async def extract_relations_from_texts(texts: List[str]) -> List[Relation]:
+    """从文本列表中提取关系的便捷函数"""
+    processor = get_llm_processor()
+    return await processor.extract_relations(texts)
+
+
+async def extract_attributes_from_texts(texts: List[str]) -> List[Dict[str, Any]]:
+    """从文本列表中提取属性的便捷函数"""
+    processor = get_llm_processor()
+    return await processor.extract_attributes(texts)

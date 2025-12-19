@@ -64,7 +64,7 @@ class EntityMatcher:
         }
     
     def normalize_name(self, name: str) -> str:
-        """标准化实体名称"""
+        """标准化实体名称 - 增强处理，支持全称与简称的不一致问题"""
         if not name or not isinstance(name, str):
             return ""
         
@@ -76,16 +76,44 @@ class EntityMatcher:
         # 基础清理
         normalized = name.strip()
         
-        # 移除常见后缀
-        suffixes = [
+        # 移除常见的公司后缀
+        company_suffixes = [
             '有限公司', '有限责任公司', '股份有限公司', '集团', '公司',
-            '投资', '资本', '基金', '创投', '风投', '私募',
-            'Partners', 'Capital', 'Ventures', 'Fund', 'Investment'
+            '科技有限公司', '信息技术有限公司', '网络科技有限公司', '电子商务有限公司'
         ]
         
-        for suffix in suffixes:
+        # 移除常见的投资机构后缀
+        investor_suffixes = [
+            '投资', '资本', '基金', '创投', '风投', '私募', '资产', '管理', '合伙企业',
+            'Partners', 'Capital', 'Ventures', 'Fund', 'Investment', 'Management'
+        ]
+        
+        # 移除所有后缀
+        all_suffixes = company_suffixes + investor_suffixes
+        for suffix in all_suffixes:
             if normalized.endswith(suffix):
                 normalized = normalized[:-len(suffix)].strip()
+        
+        # 处理常见的简称模式
+        # 1. 处理"北京/上海/深圳...+公司名"的模式，保留公司名部分
+        city_prefixes = ['北京', '上海', '深圳', '广州', '杭州', '成都', '武汉', '南京', '西安', '重庆']
+        for city in city_prefixes:
+            if normalized.startswith(city):
+                normalized = normalized[len(city):].strip()
+                break
+        
+        # 2. 处理"中国+公司名"的模式
+        if normalized.startswith('中国'):
+            normalized = normalized[2:].strip()
+        
+        # 3. 处理括号内容，如"(北京)"、"(上海)"等
+        normalized = re.sub(r'\([^)]*\)', '', normalized)
+        
+        # 4. 处理中英文混合情况，如"阿里巴巴(Alibaba)"
+        normalized = re.sub(r'[a-zA-Z\(\)]+', '', normalized).strip()
+        
+        # 5. 移除特殊字符
+        normalized = re.sub(r'[^\w\u4e00-\u9fff]', '', normalized)
         
         # 统一大小写和空格
         normalized = re.sub(r'\s+', ' ', normalized.lower())
@@ -93,6 +121,53 @@ class EntityMatcher:
         # 缓存结果
         self.name_normalization_cache[name] = normalized
         return normalized
+    
+    def abbreviated_match(self, name: str, target_entities: Set[str]) -> Optional[Tuple[str, float]]:
+        """简称匹配 - 处理全称与简称的不一致问题"""
+        if not name or not target_entities:
+            return None
+        
+        normalized_name = self.normalize_name(name)
+        best_match = None
+        best_score = 0.0
+        
+        for entity in target_entities:
+            normalized_entity = self.normalize_name(entity)
+            
+            # 1. 检查是否一个是另一个的子串
+            if normalized_name in normalized_entity:
+                # 计算子串长度占比
+                score = len(normalized_name) / len(normalized_entity)
+                if score > best_score and score >= 0.5:  # 至少占50%长度
+                    best_score = score
+                    best_match = entity
+            elif normalized_entity in normalized_name:
+                # 计算子串长度占比
+                score = len(normalized_entity) / len(normalized_name)
+                if score > best_score and score >= 0.5:  # 至少占50%长度
+                    best_score = score
+                    best_match = entity
+            
+            # 2. 检查是否有共同的核心词汇
+            # 分割名称为词汇列表
+            name_words = set(normalized_name.split())
+            entity_words = set(normalized_entity.split())
+            
+            if name_words and entity_words:
+                # 计算共同词汇的比例
+                common_words = name_words.intersection(entity_words)
+                if common_words:
+                    # 计算相似度：共同词汇数量 / 较长词汇列表的长度
+                    similarity = len(common_words) / max(len(name_words), len(entity_words))
+                    if similarity > best_score and similarity >= 0.6:  # 至少60%共同词汇
+                        best_score = similarity
+                        best_match = entity
+        
+        if best_match and best_score >= 0.5:
+            self.entity_linking_stats['fuzzy_matches'] += 1
+            return (best_match, float(best_score))
+        
+        return None
     
     def exact_match(self, name: str, target_entities: Set[str]) -> Optional[str]:
         """精确匹配"""
@@ -179,7 +254,7 @@ class EntityMatcher:
     
     def match_entity(self, name: str, target_entities: Set[str], entity_type: str = "company") -> Dict:
         """
-        综合实体匹配
+        综合实体匹配 - 增强处理，支持全称与简称的不一致问题
         
         Args:
             name: 待匹配实体名称
@@ -223,7 +298,20 @@ class EntityMatcher:
                 'reason': '别名匹配成功'
             }
         
-        # 3. 模糊匹配
+        # 3. 简称匹配 - 新增的匹配策略，处理全称与简称的不一致问题
+        abbreviated_result = self.abbreviated_match(name, target_entities)
+        if abbreviated_result:
+            matched_entity, confidence = abbreviated_result
+            return {
+                'success': True,
+                'matched_entity': matched_entity,
+                'match_type': 'abbreviated',
+                'confidence': confidence,
+                'requires_llm': False,
+                'reason': f'简称匹配成功，相似度: {confidence:.2f}'
+            }
+        
+        # 4. 模糊匹配
         fuzzy_result = self.fuzzy_match(name, target_entities, CONFIDENCE_THRESHOLDS['fuzzy_match'])
         if fuzzy_result:
             matched_entity, confidence = fuzzy_result
@@ -236,7 +324,7 @@ class EntityMatcher:
                 'reason': f'模糊匹配成功，相似度: {confidence:.2f}'
             }
         
-        # 4. 需要LLM增强
+        # 5. 需要LLM增强
         self.entity_linking_stats['llm_required'] += 1
         return {
             'success': False,

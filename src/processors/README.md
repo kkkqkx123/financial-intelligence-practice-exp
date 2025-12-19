@@ -33,10 +33,11 @@
    - 置信度阈值控制
    - 多级回退机制
 
-6. **BatchOptimizer** - 批处理优化器
-   - LLM调用记录
+6. **OptimizedBatchProcessor** - 优化的批处理处理器
+   - 文本相似度计算与分组
+   - 动态批量大小调整
+   - 优先级管理
    - 批量处理优化
-   - 成本统计分析
 
 ## 性能优势
 
@@ -81,8 +82,10 @@ src/
 │   ├── entity_matcher.py
 │   ├── data_validator.py
 │   ├── llm_client.py
-│   ├── kg_builder.py
-│   └── batch_optimizer.py
+│   ├── llm_processor.py      # 简化的LLM处理器
+│   ├── relation_extractor.py  # 优化的关系提取器
+│   ├── batch_processor.py     # 优化的批处理处理器
+│   └── kg_builder.py
 ├── config/             # 配置文件
 │   ├── __init__.py
 │   ├── settings.py

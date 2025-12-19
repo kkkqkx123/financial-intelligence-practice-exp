@@ -1,11 +1,11 @@
 """
-混合式知识图谱构建器
+知识图谱构建器
 结合硬编码规则和LLM增强，实现高效的知识图谱构建
 """
 
 import json
 import logging
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Dict, List, Optional, Set, Tuple, Any, Union
 from datetime import datetime
 from collections import defaultdict
 
@@ -16,15 +16,15 @@ from .config import ROUND_MAPPING, CONFIDENCE_THRESHOLDS
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 设置日志级别为WARNING，减少INFO级别的日志输出
-logger.setLevel(logging.WARNING)
+# 设置日志级别为INFO，显示投资方未披露的信息
+logger.setLevel(logging.INFO)
 
 
-class HybridKGBuilder:
-    """混合式知识图谱构建器"""
+class KGBuilder:
+    """知识图谱构建器"""
     
     def __init__(self):
-        """初始化混合知识图谱构建器"""
+        """初始化知识图谱构建器"""
         self.matcher = EntityMatcher()
         self.parser = DataParser()
         self.knowledge_graph = {
@@ -68,6 +68,148 @@ class HybridKGBuilder:
         self._company_id_counter = 1
         self._investor_id_counter = 1
         self._event_id_counter = 1
+    
+    def add_company(self, company_data: Dict[str, Any]) -> None:
+        """添加公司实体到知识图谱
+        
+        Args:
+            company_data: 公司数据字典，包含name、industry、description等字段
+        """
+        if not company_data or not company_data.get('name'):
+            logger.warning("尝试添加空公司数据或缺少名称字段")
+            return
+        
+        # 处理可能为列表的字段
+        name = company_data.get('name', '')
+        if isinstance(name, list):
+            name = ' '.join(str(item) for item in name) if name else ''
+        
+        industry = company_data.get('industry', '')
+        if isinstance(industry, list):
+            industry = ' '.join(str(item) for item in industry) if industry else ''
+            
+        description = company_data.get('description', '')
+        if isinstance(description, list):
+            description = ' '.join(str(item) for item in description) if description else ''
+            
+        id_field = company_data.get('id', '')
+        if isinstance(id_field, list):
+            id_field = ' '.join(str(item) for item in id_field) if id_field else ''
+            
+        established_date = company_data.get('established_date', '')
+        if isinstance(established_date, list):
+            established_date = ' '.join(str(item) for item in established_date) if established_date else ''
+            
+        registered_capital = company_data.get('registered_capital', '')
+        if isinstance(registered_capital, list):
+            registered_capital = ' '.join(str(item) for item in registered_capital) if registered_capital else ''
+            
+        legal_representative = company_data.get('legal_representative', '')
+        if isinstance(legal_representative, list):
+            legal_representative = ' '.join(str(item) for item in legal_representative) if legal_representative else ''
+            
+        credit_code = company_data.get('credit_code', '')
+        if isinstance(credit_code, list):
+            credit_code = ' '.join(str(item) for item in credit_code) if credit_code else ''
+            
+        website = company_data.get('website', '')
+        if isinstance(website, list):
+            website = ' '.join(str(item) for item in website) if website else ''
+        
+        # 生成公司ID
+        company_id = self._generate_company_id(name)
+        
+        # 构建公司实体
+        company_entity = {
+            'id': company_id,
+            'name': name,
+            'aliases': self._generate_company_aliases(name),
+            'description': description,
+            'industry': industry,
+            'registration_info': {
+                'registration_id': id_field,
+                'legal_representative': legal_representative,
+                'registered_capital': self.parser._normalize_capital(registered_capital) if registered_capital else None,
+                'unified_credit_code': credit_code,
+                'establishment_date': self.parser._parse_date(established_date) if established_date else None
+            },
+            'contact_info': {
+                'address': company_data.get('address', ''),
+                'website': website
+            },
+            'metadata': {
+                'created_at': datetime.now().isoformat(),
+                'data_source': 'test_data',
+                'confidence': 0.8
+            }
+        }
+        
+        # 添加到公司字典
+        self.companies[company_id] = company_entity
+        self.build_stats['total_companies'] = len(self.companies)
+        
+        logger.debug(f"已添加公司实体: {company_entity['name']} (ID: {company_id})")
+    
+    def add_investor(self, investor_data: Dict[str, Any]) -> None:
+        """添加投资方实体到知识图谱
+        
+        Args:
+            investor_data: 投资方数据字典，包含name、type、description等字段
+        """
+        if not investor_data or not investor_data.get('name'):
+            logger.warning("尝试添加空投资方数据或缺少名称字段")
+            return
+        
+        # 处理可能为列表的字段
+        name = investor_data.get('name', '')
+        if isinstance(name, list):
+            name = ' '.join(str(item) for item in name) if name else ''
+        
+        type_field = investor_data.get('type', '')
+        if isinstance(type_field, list):
+            type_field = ' '.join(str(item) for item in type_field) if type_field else ''
+            
+        description = investor_data.get('description', '')
+        if isinstance(description, list):
+            description = ' '.join(str(item) for item in description) if description else ''
+            
+        industry = investor_data.get('industry', '')
+        if isinstance(industry, list):
+            industry = ' '.join(str(item) for item in industry) if industry else ''
+            
+        scale = investor_data.get('scale', '')
+        if isinstance(scale, list):
+            scale = ' '.join(str(item) for item in scale) if scale else ''
+            
+        rounds = investor_data.get('rounds', '')
+        if isinstance(rounds, list):
+            rounds = ' '.join(str(item) for item in rounds) if rounds else ''
+        
+        # 生成投资方ID
+        investor_id = self._generate_investor_id(name)
+        
+        # 构建投资方实体
+        investor_entity = {
+            'id': investor_id,
+            'name': name,
+            'aliases': self._generate_investor_aliases(name),
+            'description': description,
+            'type': type_field,
+            'industry': industry,
+            'scale': self._parse_scale(scale) if scale else 'unknown',
+            'preferred_rounds': self._parse_preferred_rounds(rounds) if rounds else [],
+            'metadata': {
+                'created_at': datetime.now().isoformat(),
+                'data_source': 'test_data',
+                'confidence': 0.8
+            }
+        }
+        
+        # 添加到投资方字典
+        self.investors[investor_id] = investor_entity
+        self.build_stats['total_investors'] = len(self.investors)
+        
+        logger.debug(f"已添加投资方实体: {investor_entity['name']} (ID: {investor_id})")
     
     def _generate_company_id(self, company_name: str) -> str:
         """生成公司实体ID"""
@@ -194,13 +336,18 @@ class HybridKGBuilder:
     def _create_investment_relationship(self, event: Dict) -> None:
         """创建单个投资关系 - 增强实体链接错误处理"""
         try:
-            # 获取投资方和融资方名称
-            investor_names = event.get('investors', [])
-            investee_name = event.get('investee', '')
+            # 获取投资方和融资方名称 - 优先使用英文键名（因为DataParser现在返回英文键名）
+            investor_names = event.get('investors', event.get('投资方', []))
+            investee_name = event.get('investee', event.get('融资方', ''))
             
             # 验证必要字段
             if not investor_names or not investee_name:
-                logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
+                if not investor_names and not investee_name:
+                    logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
+                elif not investor_names:
+                    logger.info(f"投资事件投资方未披露，跳过关系创建: 融资方={investee_name}, 描述={event.get('description', '')[:50]}...")
+                else:
+                    logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
                 self.stats['failed_events'] += 1
                 return
             
@@ -345,20 +492,28 @@ class HybridKGBuilder:
             'rounds': []
         }
     
-    def _parse_scale(self, scale_str: str) -> str:
+    def _parse_scale(self, scale_str: Union[str, List[str]]) -> str:
         """解析规模信息"""
         if not scale_str:
             return 'unknown'
+        
+        # 如果是列表，转换为字符串
+        if isinstance(scale_str, list):
+            scale_str = ' '.join(str(item) for item in scale_str) if scale_str else ''
         
         if '人民币' in scale_str or '美元' in scale_str:
             return 'managed_fund'
         
         return 'unknown'
     
-    def _parse_preferred_rounds(self, rounds_str: str) -> List[str]:
+    def _parse_preferred_rounds(self, rounds_str: Union[str, List[str]]) -> List[str]:
         """解析偏好轮次"""
         if not rounds_str:
             return []
+        
+        # 如果是列表，转换为字符串
+        if isinstance(rounds_str, list):
+            rounds_str = ' '.join(str(item) for item in rounds_str) if rounds_str else ''
         
         rounds = []
         for round_name in ROUND_MAPPING.keys():
@@ -485,3 +640,121 @@ class HybridKGBuilder:
                 'fuzzy_match_cache': len(self.matcher.fuzzy_match_cache)
             }
         }
+    
+    def build_investment_structure_relationships(self, investment_structures: List[Dict]) -> None:
+        """构建投资结构关系
+        
+        Args:
+            investment_structures: 投资结构数据列表
+        """
+        logger.info(f"开始构建 {len(investment_structures)} 个投资结构关系")
+        
+        structure_relationships = []
+        
+        for structure in investment_structures:
+            try:
+                # 获取投资方名称（兼容两种字段名）
+                investor_name = structure.get('机构名称', structure.get('name', ''))
+                if not investor_name:
+                    logger.warning(f"投资结构数据缺少机构名称: {structure}")
+                    continue
+                
+                # 解析投资偏好（兼容两种字段名）
+                industries = self._parse_structure_industries(structure.get('行业', structure.get('industries', '')))
+                rounds = self._parse_structure_rounds(structure.get('轮次', structure.get('rounds', '')))
+                
+                # 创建投资偏好关系
+                for industry in industries:
+                    relationship = {
+                        'source': investor_name,
+                        'target': industry,
+                        'type': 'INVESTS_IN_INDUSTRY',
+                        'properties': {
+                            'preference_strength': 'high',
+                            'source_data': 'investment_structure',
+                            'confidence': 0.8
+                        }
+                    }
+                    structure_relationships.append(relationship)
+                
+                # 创建轮次偏好关系
+                for round_type in rounds:
+                    relationship = {
+                        'source': investor_name,
+                        'target': round_type,
+                        'type': 'PREFERS_ROUND',
+                        'properties': {
+                            'preference_strength': 'medium',
+                            'source_data': 'investment_structure',
+                            'confidence': 0.8
+                        }
+                    }
+                    structure_relationships.append(relationship)
+                
+            except Exception as e:
+                logger.error(f"处理投资结构失败: {structure.get('机构名称', '')}, 错误: {e}")
+                continue
+        
+        # 将投资结构关系添加到知识图谱
+        if 'structure_relationships' not in self.knowledge_graph:
+            self.knowledge_graph['structure_relationships'] = []
+        
+        self.knowledge_graph['structure_relationships'].extend(structure_relationships)
+        logger.info(f"投资结构关系构建完成，共 {len(structure_relationships)} 个关系")
+    
+    def _parse_structure_industries(self, industries_str: str) -> List[str]:
+        """解析投资结构中的行业信息
+        
+        Args:
+            industries_str: 行业字符串，如"企业服务36家 文娱内容游戏9家"
+            
+        Returns:
+            行业列表
+        """
+        if not industries_str:
+            return []
+        
+        industries = []
+        
+        # 分割行业信息
+        parts = industries_str.split(' ')
+        for part in parts:
+            # 提取行业名称（去掉数字和"家"）
+            if '家' in part and len(part) > 2:
+                industry = part.replace('家', '').strip()
+                # 移除数字
+                industry = ''.join([c for c in industry if not c.isdigit()])
+                if industry:
+                    industries.append(industry)
+        
+        return industries
+    
+    def _parse_structure_rounds(self, rounds_str: str) -> List[str]:
+        """解析投资结构中的轮次信息
+        
+        Args:
+            rounds_str: 轮次字符串，如"A轮56家、B轮47家"
+            
+        Returns:
+            轮次列表
+        """
+        if not rounds_str:
+            return []
+        
+        rounds = []
+        
+        # 分割轮次信息
+        parts = rounds_str.split('、')
+        for part in parts:
+            # 提取轮次名称（去掉数字和"家"）
+            if '轮' in part and len(part) > 2:
+                round_type = part.replace('轮', '').strip()
+                # 移除数字和"家"
+                round_type = ''.join([c for c in round_type if not c.isdigit() and c != '家'])
+                if round_type:
+                    # 标准化轮次名称
+                    standardized_round = self._standardize_round(round_type + '轮')
+                    if standardized_round['round'] != 'unknown':
+                        rounds.append(standardized_round['round'])
+        
+        return rounds
