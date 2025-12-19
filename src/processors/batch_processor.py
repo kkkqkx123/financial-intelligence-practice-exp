@@ -341,6 +341,30 @@ class OptimizedBatchProcessor:
         """设置知识图谱实例"""
         self.knowledge_graph = knowledge_graph
     
+    def get_companies(self):
+        """获取所有公司实体"""
+        if hasattr(self.knowledge_graph, 'get_companies'):
+            return self.knowledge_graph.get_companies()
+        elif hasattr(self.knowledge_graph, 'companies'):
+            return self.knowledge_graph.companies
+        elif isinstance(self.knowledge_graph, dict) and 'companies' in self.knowledge_graph:
+            return self.knowledge_graph['companies']
+        else:
+            logger.warning("无法获取公司实体，返回空列表")
+            return []
+    
+    def get_investors(self):
+        """获取所有投资方实体"""
+        if hasattr(self.knowledge_graph, 'get_investors'):
+            return self.knowledge_graph.get_investors()
+        elif hasattr(self.knowledge_graph, 'investors'):
+            return self.knowledge_graph.investors
+        elif isinstance(self.knowledge_graph, dict) and 'investors' in self.knowledge_graph:
+            return self.knowledge_graph['investors']
+        else:
+            logger.warning("无法获取投资方实体，返回空列表")
+            return []
+    
     async def process_requests(self, requests: List[BatchRequest]) -> List[BatchResult]:
         """处理批量请求"""
         if not requests:
@@ -894,7 +918,7 @@ class OptimizedBatchProcessor:
                         continue
                     
                     # 调用LLM生成描述
-                    result = await self.llm_processor.generate_completion(prompt)
+                    result = await self.llm_processor.llm_client.generate_completion(prompt)
                     
                     # 检查结果
                     if isinstance(result, dict) and 'description' in result:
@@ -972,7 +996,7 @@ class OptimizedBatchProcessor:
                 """
                 
                 # 调用LLM进行行业分类
-                result = await self.llm_processor.generate_completion(prompt)
+                result = await self.llm_processor.llm_client.generate_completion(prompt)
                 
                 # 检查结果
                 if isinstance(result, dict) and 'industry' in result:
@@ -1071,7 +1095,7 @@ class OptimizedBatchProcessor:
                 """
                 
                 # 调用LLM进行名称标准化
-                result = await self.llm_processor.generate_completion(prompt)
+                result = await self.llm_processor.llm_client.generate_completion(prompt)
                 
                 # 检查结果
                 if isinstance(result, dict) and 'standardized_name' in result:
@@ -1118,9 +1142,14 @@ class OptimizedBatchProcessor:
             'investor_standardizations': {'processed': 0, 'enhanced': 0}
         }
         
+        # 检查knowledge_graph是否已设置
+        if self.knowledge_graph is None:
+            print("警告: knowledge_graph未设置，跳过增强处理")
+            return results
+        
         # 获取待处理的实体
-        companies = self.knowledge_graph.get_companies()
-        investors = self.knowledge_graph.get_investors()
+        companies = self.get_companies()
+        investors = self.get_investors()
         
         # 处理实体描述优化
         if companies:

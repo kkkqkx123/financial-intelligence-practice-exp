@@ -298,21 +298,23 @@ class EntityMatcher:
                 'reason': '别名匹配成功'
             }
         
-        # 3. 简称匹配 - 新增的匹配策略，处理全称与简称的不一致问题
+        # 3. 简称匹配 - 降低阈值
         abbreviated_result = self.abbreviated_match(name, target_entities)
         if abbreviated_result:
             matched_entity, confidence = abbreviated_result
-            return {
-                'success': True,
-                'matched_entity': matched_entity,
-                'match_type': 'abbreviated',
-                'confidence': confidence,
-                'requires_llm': False,
-                'reason': f'简称匹配成功，相似度: {confidence:.2f}'
-            }
+            # 降低简称匹配的阈值要求
+            if confidence >= 0.4:  # 从原来的0.5降低到0.4
+                return {
+                    'success': True,
+                    'matched_entity': matched_entity,
+                    'match_type': 'abbreviated',
+                    'confidence': confidence,
+                    'requires_llm': False,
+                    'reason': f'简称匹配成功，相似度: {confidence:.2f}'
+                }
         
-        # 4. 模糊匹配
-        fuzzy_result = self.fuzzy_match(name, target_entities, CONFIDENCE_THRESHOLDS['fuzzy_match'])
+        # 4. 模糊匹配 - 降低阈值
+        fuzzy_result = self.fuzzy_match(name, target_entities, threshold=0.6)  # 从原来的0.8降低到0.6
         if fuzzy_result:
             matched_entity, confidence = fuzzy_result
             return {
@@ -324,7 +326,57 @@ class EntityMatcher:
                 'reason': f'模糊匹配成功，相似度: {confidence:.2f}'
             }
         
-        # 5. 需要LLM增强
+        # 5. 尝试最佳匹配（即使低于阈值）
+        best_match = None
+        best_similarity = 0.0
+        
+        for entity in target_entities:
+            normalized_name = self.normalize_name(name)
+            normalized_entity = self.normalize_name(entity)
+            
+            # 计算多种相似度指标
+            similarity = SequenceMatcher(None, normalized_name, normalized_entity).ratio()
+            
+            # 检查子串匹配
+            if normalized_name in normalized_entity or normalized_entity in normalized_name:
+                similarity = max(similarity, 0.7)
+            
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = entity
+        
+        # 如果最佳匹配的相似度超过0.4，则返回匹配结果
+        if best_match and best_similarity > 0.4:
+            return {
+                'success': True,
+                'matched_entity': best_match,
+                'match_type': 'best_match',
+                'confidence': best_similarity,
+                'requires_llm': False,
+                'reason': f'最佳匹配成功，相似度: {best_similarity:.2f}'
+            }
+        
+        # 6. 尝试包含关系匹配
+        for entity in target_entities:
+            normalized_name = self.normalize_name(name)
+            normalized_entity = self.normalize_name(entity)
+            
+            # 如果一个名称包含另一个名称
+            if normalized_name in normalized_entity or normalized_entity in normalized_name:
+                # 计算包含比例
+                if len(normalized_name) > 0:
+                    contain_ratio = min(len(normalized_name), len(normalized_entity)) / max(len(normalized_name), len(normalized_entity))
+                    if contain_ratio > 0.4:  # 包含比例超过40%
+                        return {
+                            'success': True,
+                            'matched_entity': entity,
+                            'match_type': 'containment',
+                            'confidence': contain_ratio,
+                            'requires_llm': False,
+                            'reason': f'包含关系匹配成功，比例: {contain_ratio:.2f}'
+                        }
+        
+        # 7. 最后才需要LLM增强
         self.entity_linking_stats['llm_required'] += 1
         return {
             'success': False,

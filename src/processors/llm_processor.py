@@ -402,10 +402,15 @@ class LLMClient:
                 "max_tokens": 1000
             }
             
+            # 构建API请求URL，避免重复拼接chat/completions
+            api_url = base_url
+            if not api_url.endswith('/chat/completions'):
+                api_url = f"{base_url.rstrip('/')}/chat/completions"
+            
             # 发送请求
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{base_url}/chat/completions",
+                    api_url,
                     headers=headers,
                     json=data
                 )

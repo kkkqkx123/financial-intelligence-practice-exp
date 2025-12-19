@@ -9,6 +9,7 @@ import sys
 import json
 import logging
 import argparse
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -249,7 +250,7 @@ class Pipeline:
         
         return parsed_data
     
-    def run_entity_building_stage(self, parsed_data: Dict[str, List[Dict]]) -> Dict:
+    async def run_entity_building_stage(self, parsed_data: Dict[str, List[Dict]]) -> Dict:
         """运行实体构建阶段"""
         logger.info("开始实体构建阶段")
         stage_start = datetime.now()
@@ -295,14 +296,14 @@ class Pipeline:
 
         # 步骤3：LLM增强优化
         logger.info("步骤3：LLM增强优化...")
-        enhanced_companies = self.optimizer.optimize_entity_descriptions(companies, 'company')
-        enhanced_investors = self.optimizer.optimize_entity_descriptions(investors, 'investor')
-        industry_classifications = self.optimizer.optimize_industry_classification(enhanced_companies)
-
+        # 设置知识图谱到optimizer
+        self.optimizer.set_knowledge_graph(self.builder.knowledge_graph)
+        enhanced_companies = await self.optimizer.optimize_entity_descriptions(companies, 'company')
+        enhanced_investors = await self.optimizer.optimize_entity_descriptions(investors, 'investor')
+        industry_classifications = await self.optimizer.optimize_industry_classification(enhanced_companies)
         investor_names = {i.get('name', '') for i in investors_raw if i.get('name')}
-        standardized_names = self.optimizer.optimize_investor_name_standardization(investor_names)
-
-        enhancement_results = self.optimizer.process_all_pending_enhancements()
+        standardized_names = await self.optimizer.optimize_investor_name_standardization(investor_names)
+        enhancement_results = await self.optimizer.process_all_pending_enhancements()
 
         logger.info(f"LLM增强优化完成：")
         logger.info(f"  - 增强实体描述：{len(enhanced_companies)} 公司, {len(enhanced_investors)} 投资方")
@@ -320,8 +321,9 @@ class Pipeline:
         kg_validation = self.validator.validate_knowledge_graph(kg_data)
 
         logger.info(f"知识图谱验证完成：")
-        logger.info(f"  - 实体一致性：{'通过' if kg_validation['consistency_checks']['id_consistency']['total_missing'] == 0 else '需要修复'}")
-        logger.info(f"  - 关系完整性：{kg_validation['relationship_validation']['valid_relationships']}/{kg_validation['relationship_validation']['total_relationships']}")
+        logger.info(f"  - 实体一致性：{kg_validation['entity_consistency']['valid']}/{kg_validation['entity_consistency']['total']} 有效")
+        logger.info(f"  - 关系完整性：{kg_validation['relationship_completeness']['valid']}/{kg_validation['relationship_completeness']['total']} 有效")
+        logger.info(f"  - 总体得分：{kg_validation['overall_score']:.2f}")
 
         # 更新构建器内部状态
         self.builder.companies = enhanced_companies
@@ -429,7 +431,7 @@ class Pipeline:
         
         logger.info(f"中间结果已保存: {output_file}")
     
-    def save_final_results(self, kg_data: Dict, quality_report: Dict):
+    async def save_final_results(self, kg_data: Dict, quality_report: Dict):
         """保存最终结果"""
         logger.info("步骤8：保存结果...")
         
@@ -453,12 +455,20 @@ class Pipeline:
             json.dump(kg_data.get('enhancements', {}), f, ensure_ascii=False, indent=2)
         
         # 保存LLM增强队列
-        llm_queue = self.builder.get_llm_enhancement_batch()
-        if llm_queue:
-            llm_file = self.output_dir / "llm_enhancement_queue.json"
-            with open(llm_file, 'w', encoding='utf-8') as f:
-                json.dump(llm_queue, f, ensure_ascii=False, indent=2)
-            logger.info(f"LLM增强队列已保存: {len(llm_queue)} 个项目")
+        try:
+            llm_queue = self.builder.get_llm_enhancement_batch()
+            # 如果是协程对象，需要await
+            if asyncio.iscoroutine(llm_queue):
+                logger.warning("检测到llm_queue是协程对象，正在等待其完成...")
+                llm_queue = await llm_queue
+                
+            if llm_queue:
+                llm_file = self.output_dir / "llm_enhancement_queue.json"
+                with open(llm_file, 'w', encoding='utf-8') as f:
+                    json.dump(llm_queue, f, ensure_ascii=False, indent=2)
+                logger.info(f"LLM增强队列已保存: {len(llm_queue)} 个项目")
+        except Exception as e:
+            logger.error(f"保存LLM增强队列时出错: {e}")
         
         # 保存统计信息
         stats = {
@@ -504,7 +514,7 @@ class Pipeline:
                 "message": "知识图谱导出到Neo4j失败"
             }
     
-    def run_full_pipeline(self, save_intermediate: bool = True) -> Dict[str, Any]:
+    async def run_full_pipeline(self, save_intermediate: bool = True) -> Dict[str, Any]:
         """运行完整的知识图谱构建流水线"""
         logger.info("开始运行完整的知识图谱构建流水线")
         self.pipeline_stats['start_time'] = datetime.now().isoformat()
@@ -529,7 +539,7 @@ class Pipeline:
             
             # 阶段3: 实体构建
             logger.info("=== 阶段3: 实体构建 ===")
-            kg_data: Dict[str, Any] = self.run_entity_building_stage(parsed_data)
+            kg_data: Dict[str, Any] = await self.run_entity_building_stage(parsed_data)
             
             if save_intermediate:
                 self.save_intermediate_results(kg_data, "knowledge_graph")
@@ -539,7 +549,7 @@ class Pipeline:
             quality_report: Dict[str, Any] = self.run_quality_check_stage(kg_data)
             
             # 保存最终结果
-            self.save_final_results(kg_data, quality_report)
+            await self.save_final_results(kg_data, quality_report)
             
             # 更新流水线统计
             self.pipeline_stats['end_time'] = datetime.now().isoformat()
@@ -556,13 +566,24 @@ class Pipeline:
                 neo4j_results = self.export_to_neo4j(kg_data)
                 logger.info(f"Neo4j导出完成: {neo4j_results}")
             
-            llm_enhancement_batch = self.builder.get_llm_enhancement_batch()
+            # 获取LLM增强队列，确保不是协程对象
+            try:
+                llm_enhancement_batch = self.builder.get_llm_enhancement_batch()
+                # 如果是协程对象，需要await
+                if asyncio.iscoroutine(llm_enhancement_batch):
+                    logger.warning("检测到llm_enhancement_batch是协程对象，正在等待其完成...")
+                    llm_enhancement_batch = await llm_enhancement_batch
+                llm_enhancement_count = len(llm_enhancement_batch) if llm_enhancement_batch else 0
+            except Exception as e:
+                logger.error(f"获取LLM增强队列时出错: {e}")
+                llm_enhancement_count = 0
+            
             return {
                 'success': True,
                 'knowledge_graph': kg_data,
                 'quality_report': quality_report,
                 'statistics': self.pipeline_stats,
-                'llm_enhancement_required': len(llm_enhancement_batch) if llm_enhancement_batch else 0,
+                'llm_enhancement_required': llm_enhancement_count,
                 'neo4j_results': neo4j_results
             }
             
@@ -649,8 +670,11 @@ def main():
         neo4j_config=neo4j_config
     )
     
-    # 运行完整的流水线
-    result = pipeline.run_full_pipeline(save_intermediate=not args.no_intermediate)
+    # 运行完整的流水线（使用asyncio运行）
+    async def run_pipeline():
+        return await pipeline.run_full_pipeline(save_intermediate=not args.no_intermediate)
+    
+    result = asyncio.run(run_pipeline())
     
     # 输出结果摘要
     if result['success']:

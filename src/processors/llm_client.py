@@ -133,17 +133,16 @@ class OpenAICompatibleClient(LLMClientInterface):
         if kwargs.get('presence_penalty') is not None:
             payload['presence_penalty'] = kwargs['presence_penalty']
         
-        # 确保base_url格式正确
-        base_url = self.base_url.rstrip('/')
-        if not base_url.endswith('/chat/completions'):
-            if base_url.endswith('/v1'):
-                url = f"{base_url}/chat/completions"
-            elif base_url.endswith('/v1/'):
-                url = f"{base_url}chat/completions"
+        # 构建API请求URL，避免重复拼接chat/completions
+        api_url = self.base_url
+        if not api_url.endswith('/chat/completions'):
+            # 如果base_url不以/chat/completions结尾，则添加它
+            if api_url.endswith('/v1'):
+                api_url = f"{api_url}/chat/completions"
+            elif api_url.endswith('/v1/'):
+                api_url = f"{api_url}chat/completions"
             else:
-                url = f"{base_url}/v1/chat/completions"
-        else:
-            url = base_url
+                api_url = f"{api_url.rstrip('/')}/v1/chat/completions"
         
         headers = {
             'Content-Type': 'application/json',
@@ -151,14 +150,14 @@ class OpenAICompatibleClient(LLMClientInterface):
         }
         
         try:
-            logger.debug(f"发送请求到 {url}")
+            logger.debug(f"发送请求到 {api_url}")
             logger.debug(f"请求头: {headers}")
             logger.debug(f"请求体: {json.dumps(payload, ensure_ascii=False)}")
             
             data = json.dumps(payload).encode('utf-8')
             
             req = urllib.request.Request(
-                url,
+                api_url,
                 data=data,
                 headers=headers,
                 method='POST'
