@@ -47,6 +47,9 @@ setup_logger(
 )
 logger = get_logger('financial_kg')
 
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
+
 
 class KnowledgeGraphPipeline:
     """知识图谱构建流水线"""
@@ -264,9 +267,10 @@ class KnowledgeGraphPipeline:
         logger.info("步骤2：构建实体...")
         companies = self.builder.build_company_entities(companies_raw)
         investors = self.builder.build_investor_entities(investors_raw)
-        relationships = self.builder.build_investment_relationships(
-            investment_events_raw, companies, investors
-        )
+        
+        # 构建投资关系
+        self.builder.build_investment_relationships(investment_events_raw)
+        relationships = self.builder.knowledge_graph['relationships']
 
         # 步骤3：LLM增强优化
         logger.info("步骤3：LLM增强优化...")

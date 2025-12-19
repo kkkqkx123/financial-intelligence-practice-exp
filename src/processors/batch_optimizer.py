@@ -13,7 +13,11 @@ from .llm_client import get_llm_client
 from .llm_processor import get_enhancement_tracker, get_batch_llm_processor
 from .config import CONFIDENCE_THRESHOLDS, BATCH_PROCESSING_CONFIG
 
+# 配置日志
 logger = logging.getLogger(__name__)
+
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
 
 
 class BatchOptimizer:

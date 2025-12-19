@@ -20,6 +20,9 @@ from .field_mapping import (
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
+
 
 class DataParser:
     """硬编码优先的数据解析器"""
@@ -47,17 +50,17 @@ class DataParser:
                 try:
                     if isinstance(item, dict):
                         company = {
-                            'short_name': item.get('short_name', item.get('name', '')).strip(),
-                            'full_name': item.get('full_name', item.get('name', '')).strip(),
-                            'description': item.get('description', '').strip(),
-                            'registration_name': item.get('registration_name', item.get('name', '')).strip(),
-                            'address': item.get('address') or item.get('contact_info', {}).get('address'),
-                            'registration_id': item.get('registration_id', '').strip(),
-                            'establish_date': item.get('establish_date') or item.get('registration_date'),
-                            'legal_representative': item.get('legal_representative', '').strip(),
-                            'registered_capital': item.get('registered_capital'),
-                            'credit_code': item.get('credit_code', '').strip(),
-                            'website': item.get('website'),
+                            'short_name': item.get('名称', item.get('short_name', item.get('name', ''))).strip(),
+                            'full_name': item.get('公司名称', item.get('full_name', item.get('name', ''))).strip(),
+                            'description': item.get('公司介绍', item.get('description', '')).strip(),
+                            'registration_name': item.get('工商', item.get('registration_name', item.get('name', ''))).strip(),
+                            'address': item.get('地址') or item.get('contact_info', {}).get('address'),
+                            'registration_id': item.get('工商注册id', item.get('registration_id', '')).strip(),
+                            'establish_date': item.get('成立时间', item.get('establish_date') or item.get('registration_date')),
+                            'legal_representative': item.get('法人代表', item.get('legal_representative', '')).strip(),
+                            'registered_capital': item.get('注册资金', item.get('registered_capital')),
+                            'credit_code': item.get('统一信用代码', item.get('credit_code', '')).strip(),
+                            'website': item.get('网址', item.get('website')),
                             'parsed_by': 'hardcoded',
                             'parse_confidence': 1.0
                         }
@@ -150,12 +153,12 @@ class DataParser:
                 try:
                     if isinstance(item, dict):
                         event = {
-                            'description': item.get('description', item.get('event', '')).strip(),
-                            'investors': item.get('investors', item.get('investment_partners', [])),
-                            'investee': item.get('investee', item.get('company', '')).strip(),
-                            'investment_date': item.get('investment_date') or item.get('date'),
-                            'round': item.get('round', item.get('funding_round', '')),
-                            'amount': item.get('amount', item.get('funding_amount')),
+                            'description': item.get('事件资讯', item.get('description', item.get('event', ''))).strip(),
+                            'investors': item.get('投资方', item.get('investors', item.get('investment_partners', []))),
+                            'investee': item.get('融资方', item.get('investee', item.get('company', ''))).strip(),
+                            'investment_date': item.get('融资时间', item.get('investment_date') or item.get('date')),
+                            'round': item.get('轮次', item.get('round', item.get('funding_round', ''))),
+                            'amount': item.get('金额', item.get('amount', item.get('funding_amount'))),
                             'parsed_by': 'hardcoded',
                             'parse_confidence': 1.0
                         }
@@ -223,11 +226,11 @@ class DataParser:
                 try:
                     if isinstance(item, dict):
                         institution = {
-                            'name': item.get('name', item.get('institution_name', '')).strip(),
-                            'description': item.get('description', item.get('introduction', '')).strip(),
-                            'industries': item.get('industries', item.get('sectors', [])),
-                            'scale': item.get('scale', item.get('fund_size')),
-                            'preferred_rounds': item.get('preferred_rounds', item.get('investment_stages', [])),
+                            'name': item.get('机构名称', item.get('name', item.get('institution_name', ''))).strip(),
+                            'description': item.get('介绍', item.get('description', item.get('introduction', ''))).strip(),
+                            'industries': item.get('行业', item.get('industries', item.get('sectors', []))),
+                            'scale': item.get('规模', item.get('scale', item.get('fund_size'))),
+                            'preferred_rounds': item.get('轮次', item.get('preferred_rounds', item.get('investment_stages', []))),
                             'parsed_by': 'hardcoded',
                             'parse_confidence': 1.0
                         }
@@ -471,11 +474,14 @@ class DataParser:
         return scale_str
     
     def parse_csv_data(self, csv_content: str) -> List[Dict]:
-        """解析CSV数据内容 - 支持包含NUL字符的文件"""
+        """解析CSV数据内容 - 支持包含NUL字符的文件，增强错误处理"""
         import csv
         from io import StringIO
         
         result = []
+        error_rows = []
+        empty_rows = 0
+        
         try:
             # 清理NUL字符和其他不可见字符
             cleaned_content = csv_content.replace('\x00', '').replace('\ufeff', '')
@@ -503,30 +509,64 @@ class DataParser:
             csv_reader = csv.DictReader(string_buffer)
             for row_num, row in enumerate(csv_reader, 1):
                 try:
+                    # 检查行是否为空或只有空值
+                    if not row or all(not value or not str(value).strip() for value in row.values()):
+                        empty_rows += 1
+                        logger.debug(f"跳过空行 {row_num}")
+                        continue
+                    
                     # 清理和标准化数据
                     cleaned_row = {}
+                    has_valid_data = False
+                    
                     for key, value in row.items():
                         if key:  # 确保键不为空
+                            clean_key = key.strip()
                             if isinstance(value, str):
-                                cleaned_row[key.strip()] = value.strip()
+                                clean_value = value.strip()
+                                # 检查是否有有效内容
+                                if clean_value:
+                                    has_valid_data = True
+                                cleaned_row[clean_key] = clean_value
                             else:
-                                cleaned_row[key.strip()] = value
+                                if value is not None:
+                                    has_valid_data = True
+                                cleaned_row[clean_key] = value
                     
                     # 确保有有效数据
-                    if any(cleaned_row.values()):
+                    if has_valid_data:
                         result.append(cleaned_row)
                     else:
-                        logger.warning(f"跳过空行 {row_num}")
+                        empty_rows += 1
+                        logger.debug(f"跳过无有效数据的行 {row_num}")
                         
                 except Exception as e:
-                    logger.warning(f"解析行 {row_num} 失败: {e}")
+                    error_rows.append((row_num, str(e)))
+                    logger.warning(f"解析行 {row_num} 失败，已跳过: {e}")
                     continue
                     
         except Exception as e:
             logger.error(f"CSV解析失败: {e}")
             return []
         
-        logger.info(f"CSV解析完成: {len(result)} 条有效记录")
+        # 记录解析统计信息
+        total_lines = len(result) + len(error_rows) + empty_rows
+        logger.info(f"CSV解析完成: 总行数={total_lines}, 有效记录={len(result)}, 空行={empty_rows}, 错误行={len(error_rows)}")
+        
+        # 记录错误行的详细信息（仅在调试模式下）
+        if error_rows and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("错误行详情:")
+            for row_num, error in error_rows[:5]:  # 只显示前5个错误
+                logger.debug(f"  行 {row_num}: {error}")
+            if len(error_rows) > 5:
+                logger.debug(f"  ... 还有 {len(error_rows) - 5} 个错误")
+        
+        # 如果错误行过多，发出警告
+        if len(error_rows) > 0 and len(result) > 0:
+            error_rate = len(error_rows) / (len(result) + len(error_rows))
+            if error_rate > 0.1:  # 错误率超过10%
+                logger.warning(f"CSV解析错误率较高: {error_rate:.2%} ({len(error_rows)}/{len(result) + len(error_rows)})")
+        
         return result
     
     def get_stats(self) -> Dict[str, Any]:

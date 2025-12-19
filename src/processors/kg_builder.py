@@ -13,13 +13,33 @@ from .data_parser import DataParser
 from .entity_matcher import EntityMatcher
 from .config import ROUND_MAPPING, CONFIDENCE_THRESHOLDS
 
+# 配置日志
 logger = logging.getLogger(__name__)
+
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
 
 
 class HybridKGBuilder:
     """混合式知识图谱构建器"""
     
     def __init__(self):
+        """初始化混合知识图谱构建器"""
+        self.matcher = EntityMatcher()
+        self.parser = DataParser()
+        self.knowledge_graph = {
+            'companies': [],
+            'investors': [],
+            'relationships': []
+        }
+        self.llm_enhancement_queue = []
+        self.stats = {
+            'companies_processed': 0,
+            'investors_processed': 0,
+            'relationships_created': 0,
+            'failed_events': 0,
+            'llm_enhancements_queued': 0
+        }
         self.parser: DataParser = DataParser()
         self.matcher: EntityMatcher = EntityMatcher()
         
@@ -156,169 +176,121 @@ class HybridKGBuilder:
         logger.info(f"投资方实体构建完成，共 {len(investors)} 个实体")
         return investors
     
-    def build_investment_relationships(self, event_data: List[Dict], 
-                                       companies: Dict[str, Dict], 
-                                       investors: Dict[str, Dict]) -> List[Dict]:
-        """构建投资关系"""
-        logger.info(f"开始构建投资关系，共 {len(event_data)} 条事件")
+    def build_investment_relationships(self, investment_events: List[Dict]) -> None:
+        """构建投资关系 - 增强错误处理"""
+        logger.info(f"开始构建 {len(investment_events)} 个投资事件的关系")
         
-        relationships = []
-        company_names = {company['name'] for company in companies.values()}
-        investor_names = {investor['name'] for investor in investors.values()}
-        
-        for event in event_data:
+        for event in investment_events:
             try:
-                # 解析投资方
-                investor_names_raw = event.get('投资方', '')
-                investor_list = self._parse_investor_names(investor_names_raw)
-                
-                # 解析融资方
-                company_name = event.get('融资方', '')
-                
-                # 解析投资金额
-                amount_info = self._parse_investment_amount(event.get('金额', ''))
-                
-                # 解析投资轮次
-                round_info = self._standardize_round(event.get('轮次', ''))
-                
-                # 解析投资时间
-                investment_date = self.parser._parse_date(event.get('融资时间', ''))
-                
-                # 为每个投资方创建关系
-                for investor_name in investor_list:
-                    relationship = self._create_investment_relationship(
-                        investor_name, company_name, amount_info, round_info, 
-                        investment_date, companies, investors, 
-                        company_names, investor_names
-                    )
-                    
-                    if relationship is not None:
-                        relationships.append(relationship)
-                
+                self._create_investment_relationship(event)
             except Exception as e:
-                logger.error(f"构建投资关系失败: {event}, 错误: {e}")
-                continue
+                self.stats['failed_events'] += 1
+                logger.error(f"处理投资事件失败: {event.get('description', '')[:50]}... 错误: {e}")
+                # 将失败的事件添加到LLM增强队列，以便后续处理
+                self.llm_enhancement_queue.append(('event', str(event)))
         
-        self.build_stats['total_events'] = len(relationships)
-        logger.info(f"投资关系构建完成，共 {len(relationships)} 个关系")
-        return relationships
+        logger.info(f"投资关系构建完成: 成功={self.stats['relationships_created']}, 失败={self.stats['failed_events']}")
     
-    def _create_investment_relationship(self, investor_name: str, company_name: str,
-                                       amount_info: Dict, round_info: Dict, investment_date: Optional[str],
-                                       companies: Dict[str, Dict], investors: Dict[str, Dict],
-                                       company_names: Set[str], investor_names: Set[str]) -> Optional[Dict]:
-        """创建单个投资关系"""
+    def _create_investment_relationship(self, event: Dict) -> None:
+        """创建单个投资关系 - 增强实体链接错误处理"""
         try:
-            # 匹配投资方
-            investor_match = self.matcher.match_investor(investor_name, investor_names)
+            # 获取投资方和融资方名称
+            investor_names = event.get('investors', [])
+            investee_name = event.get('investee', '')
             
-            # 匹配公司
-            company_match = self.matcher.match_company(company_name, company_names)
+            # 验证必要字段
+            if not investor_names or not investee_name:
+                logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
+                self.stats['failed_events'] += 1
+                return
             
-            # 获取实体ID
-            investor_id = None
-            company_id = None
+            # 获取已知实体集合
+            known_companies = set([comp['name'] for comp in self.knowledge_graph['companies']])
+            known_investors = set([inv['name'] for inv in self.knowledge_graph['investors']])
             
-            if investor_match['success']:
-                # 找到匹配的投资方实体
-                for inv_id, inv_data in investors.items():
-                    if inv_data['name'] == investor_match['matched_entity']:
-                        investor_id = inv_id
+            # 匹配融资方实体
+            investee_match = self.matcher.match_company(investee_name, known_companies)
+            investee_entity = None
+            
+            if investee_match['success']:
+                # 查找已存在的实体
+                for comp in self.knowledge_graph['companies']:
+                    if comp['name'] == investee_match['matched_entity']:
+                        investee_entity = comp
                         break
             else:
-                # 创建新的投资方实体
-                investor_id = self._generate_investor_id(investor_name)
-                new_investor = {
-                    'id': investor_id,
-                    'name': investor_name,
-                    'aliases': self._generate_investor_aliases(investor_name),
-                    'description': '',
-                    'investment_focus': {'industries': [], 'scales': [], 'rounds': []},
-                    'scale': 'unknown',
-                    'preferred_rounds': [],
-                    'metadata': {
-                        'created_at': datetime.now().isoformat(),
-                        'data_source': 'investment_event',
-                        'confidence': 0.6,
-                        'requires_enhancement': True
+                # 创建新实体并标记需要LLM增强
+                investee_entity = {
+                    'name': investee_name,
+                    'type': 'Company',
+                    'properties': {
+                        'short_name': investee_name,
+                        'full_name': investee_name,
+                        'description': '',
+                        'needs_llm_enhancement': True,
+                        'source_event': event.get('description', ''),
+                        'confidence': 0.5
                     }
                 }
-                investors[investor_id] = new_investor
-                self.build_stats['total_investors'] += 1
+                self.knowledge_graph['companies'].append(investee_entity)
+                self.llm_enhancement_queue.append(('company', investee_name))
+                logger.info(f"创建新公司实体: {investee_name} (需要LLM增强)")
             
-            if company_match['success']:
-                # 找到匹配的公司实体
-                for comp_id, comp_data in companies.items():
-                    if comp_data['name'] == company_match['matched_entity']:
-                        company_id = comp_id
-                        break
-            else:
-                # 创建新的公司实体
-                company_id = self._generate_company_id(company_name)
-                new_company = {
-                    'id': company_id,
-                    'name': company_name,
-                    'aliases': self._generate_company_aliases(company_name),
-                    'description': '',
-                    'registration_info': {},
-                    'contact_info': {},
-                    'metadata': {
-                        'created_at': datetime.now().isoformat(),
-                        'data_source': 'investment_event',
-                        'confidence': 0.6,
-                        'requires_enhancement': True
+            # 处理每个投资方
+            for investor_name in investor_names:
+                if not investor_name or not investor_name.strip():
+                    continue
+                    
+                # 匹配投资方实体
+                investor_match = self.matcher.match_investor(investor_name, known_investors)
+                investor_entity = None
+                
+                if investor_match['success']:
+                    # 查找已存在的实体
+                    for inv in self.knowledge_graph['investors']:
+                        if inv['name'] == investor_match['matched_entity']:
+                            investor_entity = inv
+                            break
+                else:
+                    # 创建新实体并标记需要LLM增强
+                    investor_entity = {
+                        'name': investor_name,
+                        'type': 'Investor',
+                        'properties': {
+                            'short_name': investor_name,
+                            'full_name': investor_name,
+                            'description': '',
+                            'needs_llm_enhancement': True,
+                            'source_event': event.get('description', ''),
+                            'confidence': 0.5
+                        }
+                    }
+                    self.knowledge_graph['investors'].append(investor_entity)
+                    self.llm_enhancement_queue.append(('investor', investor_name))
+                    logger.info(f"创建新投资方实体: {investor_name} (需要LLM增强)")
+                
+                # 创建投资关系
+                relationship = {
+                    'source': investor_entity['name'],
+                    'target': investee_entity['name'],
+                    'type': 'INVESTED_IN',
+                    'properties': {
+                        'amount': event.get('amount'),
+                        'round': event.get('round'),
+                        'date': event.get('investment_date'),
+                        'description': event.get('description', ''),
+                        'confidence': 0.8
                     }
                 }
-                companies[company_id] = new_company
-                self.build_stats['total_companies'] += 1
-            
-            # 记录需要LLM增强的项目
-            if investor_match['requires_llm']:
-                self.llm_enhancement_queue.append({
-                    'type': 'investor_enhancement',
-                    'entity_id': investor_id,
-                    'original_name': investor_name,
-                    'match_info': investor_match
-                })
-            
-            if company_match['requires_llm']:
-                self.llm_enhancement_queue.append({
-                    'type': 'company_enhancement',
-                    'entity_id': company_id,
-                    'original_name': company_name,
-                    'match_info': company_match
-                })
-            
-            # 创建关系
-            relationship = {
-                'id': self._generate_event_id(),
-                'type': 'investment',
-                'investor_id': investor_id,
-                'company_id': company_id,
-                'investor_name': investor_name,
-                'company_name': company_name,
-                'amount': amount_info,
-                'round': round_info,
-                'date': investment_date,
-                'confidence': min(investor_match.get('confidence', 0.6), 
-                               company_match.get('confidence', 0.6)),
-                'metadata': {
-                    'created_at': datetime.now().isoformat(),
-                    'source_event': True
-                }
-            }
-            
-            # 更新统计信息
-            if investor_match['success'] and company_match['success']:
-                self.build_stats['successful_links'] += 1
-            else:
-                self.build_stats['failed_links'] += 1
-            
-            return relationship
-            
+                
+                self.knowledge_graph['relationships'].append(relationship)
+                self.stats['relationships_created'] += 1
+                
         except Exception as e:
-            logger.error(f"创建投资关系失败: {investor_name} -> {company_name}, 错误: {e}")
-            return None
+            self.stats['failed_events'] += 1
+            logger.error(f"创建投资关系失败: {event.get('description', '')[:50]}... 错误: {e}")
+            # 将失败的事件添加到LLM增强队列，以便后续处理
+            self.llm_enhancement_queue.append(('event', str(event)))
     
     def _generate_company_aliases(self, company_name: str) -> List[str]:
         """生成公司别名"""

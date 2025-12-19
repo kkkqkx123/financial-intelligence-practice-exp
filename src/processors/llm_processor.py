@@ -14,6 +14,9 @@ from .llm_client import get_llm_client, LLMClientInterface
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
+
 
 class LLMProcessorInterface(ABC):
     """LLM处理器接口 - 定义业务逻辑处理方法"""

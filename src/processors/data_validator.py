@@ -12,7 +12,11 @@ from collections import defaultdict, Counter
 
 from .config import CONFIDENCE_THRESHOLDS, VALIDATION_RULES
 
+# 配置日志
 logger = logging.getLogger(__name__)
+
+# 设置日志级别为WARNING，减少INFO级别的日志输出
+logger.setLevel(logging.WARNING)
 
 
 class DataValidator:
@@ -355,7 +359,7 @@ class DataValidator:
         if not capital:
             return True  # 空值视为有效（可选字段）
         
-        # 支持格式：100万人民币，100万元，100万，100万美元等
+        # 支持格式：100万人民币，100万美元，数千万人民币，数百万美元等
         return bool(re.match(r'^\d+(\.\d+)?\s*(万|亿)?\s*(人民币|美元|元)?$', capital))
     
     def _is_valid_name(self, name: str) -> bool:
@@ -390,9 +394,10 @@ class DataValidator:
         if not bool(re.match(allowed_pattern, name)):
             return False
 
+        # 注释掉数字检查，因为公司名称可能包含数字（如"360"）
         # 检查是否包含数字（公司名称中不应包含数字）
-        if re.search(r'\d', name):
-            return False
+        # if re.search(r'\d', name):
+        #     return False
         
         return True
     
