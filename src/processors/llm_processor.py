@@ -365,19 +365,67 @@ class LLMClient:
     
     async def generate_completion(self, prompt: str) -> str:
         """生成LLM响应"""
-        # 这里应该是实际的API调用
-        # 为了演示，返回模拟响应
-        await asyncio.sleep(0.1)  # 模拟API延迟
-        
-        # 根据提示词类型返回不同的模拟响应
-        if "实体识别" in prompt:
-            return '{"companies": ["示例公司"], "investors": ["示例投资机构"]}'
-        elif "关系提取" in prompt:
-            return '{"relations": [{"investor": "示例投资机构", "company": "示例公司"}]}'
-        elif "属性提取" in prompt:
-            return '{"amount": "1000万", "round": "A轮", "date": "2023-01-01"}'
-        else:
-            return "{}"
+        try:
+            # 导入必要的库
+            import httpx
+            import os
+            
+            # 获取API配置
+            api_key = self.api_key or os.getenv("LLM_API_KEY")
+            base_url = self.base_url or os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+            
+            if not api_key:
+                logger.warning("未设置LLM API密钥，使用模拟响应")
+                # 返回模拟响应作为后备
+                if "实体识别" in prompt:
+                    return '{"companies": ["示例公司"], "investors": ["示例投资机构"]}'
+                elif "关系提取" in prompt:
+                    return '{"relations": [{"investor": "示例投资机构", "company": "示例公司"}]}'
+                elif "属性提取" in prompt:
+                    return '{"amount": "1000万", "round": "A轮", "date": "2023-01-01"}'
+                else:
+                    return "{}"
+            
+            # 构建API请求
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": os.getenv("LLM_MODEL", "gpt-3.5-turbo"),
+                "messages": [
+                    {"role": "system", "content": "你是一个金融领域的专家，专门处理公司、投资机构和投资关系相关的信息。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000
+            }
+            
+            # 发送请求
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=data
+                )
+                response.raise_for_status()
+                
+                # 解析响应
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+                
+        except Exception as e:
+            logger.error(f"LLM API调用失败: {str(e)}")
+            # 返回模拟响应作为后备
+            if "实体识别" in prompt:
+                return '{"companies": ["示例公司"], "investors": ["示例投资机构"]}'
+            elif "关系提取" in prompt:
+                return '{"relations": [{"investor": "示例投资机构", "company": "示例公司"}]}'
+            elif "属性提取" in prompt:
+                return '{"amount": "1000万", "round": "A轮", "date": "2023-01-01"}'
+            else:
+                return "{}"
     
     def handle_errors(self, error: Exception) -> Dict[str, Any]:
         """处理API错误"""

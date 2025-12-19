@@ -118,6 +118,7 @@ class KnowledgeGraphExporter:
                 node_properties = {
                     '公司ID': company_id,
                     '公司名称': company_data.get('name', ''),
+                    'name': company_data.get('name', ''),  # 添加name属性以便查找
                     '股票代码': company_data.get('stock_code', ''),
                     '成立时间': company_data.get('establishment_date', ''),
                     '注册资本': company_data.get('registered_capital', ''),
@@ -191,6 +192,7 @@ class KnowledgeGraphExporter:
                 node_properties = {
                     '投资方ID': investor_id,
                     '投资方名称': investor_data.get('name', ''),
+                    'name': investor_data.get('name', ''),  # 添加name属性以便查找
                     '投资方类型': investor_data.get('type', ''),
                     '管理资金规模': investor_data.get('managed_capital', ''),
                     '成立时间': investor_data.get('establishment_date', ''),
@@ -267,6 +269,98 @@ class KnowledgeGraphExporter:
             logger.error(f"创建行业节点失败: {e}")
             raise
     
+    def create_structure_relationships(self, structure_relationships: List[Dict]) -> int:
+        """创建投资结构关系"""
+        logger.info(f"开始创建投资结构关系: {len(structure_relationships)} 个")
+        
+        if self.graph is None or self.node_matcher is None:
+            raise RuntimeError("Neo4j连接不可用")
+        
+        created_count = 0
+        
+        try:
+            for rel in structure_relationships:
+                # 获取关系数据
+                source = rel.get('source', '')
+                target = rel.get('target', '')
+                rel_type = rel.get('type', '')
+                
+                if not source or not target or not rel_type:
+                    logger.warning(f"投资结构关系缺少必要字段: {rel}")
+                    continue
+                
+                # 查找投资方节点
+                investor_node = self.node_matcher.match(
+                    "投资方", 
+                    投资方名称=source
+                ).first()
+                
+                # 如果找不到投资方节点，尝试创建一个
+                if not investor_node:
+                    investor_node = self.node_matcher.match(
+                        "投资方", 
+                        name=source
+                    ).first()
+                
+                # 根据关系类型处理不同的目标节点
+                target_node = None
+                if rel_type == 'INVESTS_IN_INDUSTRY':
+                    # 查找行业节点
+                    target_node = self.node_matcher.match(
+                        "行业", 
+                        行业名称=target
+                    ).first()
+                    
+                    # 如果找不到行业节点，创建一个
+                    if not target_node:
+                        target_node = Node("行业", 行业名称=target)
+                        self.graph.create(target_node)
+                
+                elif rel_type == 'PREFERS_ROUND':
+                    # 查找轮次节点
+                    target_node = self.node_matcher.match(
+                        "轮次", 
+                        轮次名称=target
+                    ).first()
+                    
+                    # 如果找不到轮次节点，创建一个
+                    if not target_node:
+                        target_node = Node("轮次", 轮次名称=target)
+                        self.graph.create(target_node)
+                
+                if not investor_node or not target_node:
+                    logger.warning(f"找不到对应的节点 - 投资方: {source}, 目标: {target}, 类型: {rel_type}")
+                    continue
+                
+                # 创建关系属性
+                rel_properties = {
+                    'preference_strength': rel.get('properties', {}).get('preference_strength', 'medium'),
+                    'source_data': rel.get('properties', {}).get('source_data', 'investment_structure'),
+                    'confidence': rel.get('properties', {}).get('confidence', 0.8),
+                    '数据来源': '知识图谱构建系统',
+                    '创建时间': datetime.now().isoformat()
+                }
+                
+                # 创建关系
+                relationship = Relationship(
+                    investor_node, 
+                    '投资行业' if rel_type == 'INVESTS_IN_INDUSTRY' else '偏好轮次', 
+                    target_node, 
+                    **rel_properties
+                )
+                self.graph.create(relationship)
+                created_count += 1
+                
+                if created_count % 500 == 0:
+                    logger.info(f"已创建 {created_count} 个投资结构关系")
+            
+            logger.info(f"投资结构关系创建完成: {created_count} 个")
+            return created_count
+            
+        except Exception as e:
+            logger.error(f"创建投资结构关系失败: {e}")
+            raise
+    
     def create_investment_relationships(self, relationships: List[Dict]) -> int:
         """创建投资关系"""
         logger.info(f"开始创建投资关系: {len(relationships)} 个")
@@ -277,64 +371,190 @@ class KnowledgeGraphExporter:
         created_count = 0
         
         try:
+            # 获取所有投资方和公司节点
+            investor_nodes = list(self.graph.run("MATCH (n:投资方) RETURN n"))
+            company_nodes = list(self.graph.run("MATCH (n:公司) RETURN n"))
+            
+            # 创建名称映射字典
+            investor_name_map = {}
+            for record in investor_nodes:
+                node = record['n']
+                name = node.get('name', '')
+                alt_name = node.get('投资方名称', '')
+                if name:
+                    investor_name_map[name] = node
+                if alt_name:
+                    investor_name_map[alt_name] = node
+            
+            company_name_map = {}
+            for record in company_nodes:
+                node = record['n']
+                name = node.get('name', '')
+                alt_name = node.get('公司名称', '')
+                if name:
+                    company_name_map[name] = node
+                if alt_name:
+                    company_name_map[alt_name] = node
+            
             for rel in relationships:
-                # 处理Relation对象或字典对象
-                if hasattr(rel, 'source'):  # Relation对象
-                    investor_id = rel.source
-                    company_id = rel.target
-                    amount = rel.properties.get('amount', '')
-                    round_type = rel.properties.get('round', '')
-                    date = rel.properties.get('date', '')
-                    ratio = rel.properties.get('ratio', '')
-                else:  # 字典对象
-                    investor_id = rel.get('investor_id')
-                    company_id = rel.get('company_id')
-                    amount = rel.get('amount', '')
-                    round_type = rel.get('round', '')
-                    date = rel.get('date', '')
-                    ratio = rel.get('ratio', '')
+                # 获取关系数据
+                source = rel.get('source', '')
+                target = rel.get('target', '')
+                rel_type = rel.get('type', '')
                 
-                if not investor_id or not company_id:
-                    logger.warning(f"关系缺少必要的ID: {rel}")
+                if not source or not target or not rel_type:
+                    logger.warning(f"投资关系缺少必要字段: {rel}")
                     continue
                 
-                # 查找投资方节点
-                investor_node = self.node_matcher.match(
-                    "投资方", 
-                    投资方ID=investor_id
-                ).first()
+                # 根据关系类型处理不同的关系
+                if rel_type == 'INVESTED_IN':
+                    # 投资方投资公司的关系
+                    # 直接查找投资方节点
+                    investor_node = investor_name_map.get(source)
+                    
+                    # 如果找不到投资方节点，尝试模糊匹配
+                    if not investor_node:
+                        investor_node = self._fuzzy_match_node(source, investor_name_map)
+                    
+                    # 如果仍然找不到，创建新的投资方节点
+                    if not investor_node:
+                        investor_node = Node(
+                            "投资方",
+                            name=source,
+                            投资方名称=source,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(investor_node)
+                        logger.info(f"创建新的投资方节点: {source}")
+                    
+                    # 直接查找公司节点
+                    company_node = company_name_map.get(target)
+                    
+                    # 如果找不到公司节点，尝试模糊匹配
+                    if not company_node:
+                        company_node = self._fuzzy_match_node(target, company_name_map)
+                    
+                    # 如果仍然找不到，创建新的公司节点
+                    if not company_node:
+                        company_node = Node(
+                            "公司",
+                            name=target,
+                            公司名称=target,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(company_node)
+                        logger.info(f"创建新的公司节点: {target}")
+                    
+                    # 创建关系
+                    relationship = Relationship(
+                        investor_node, 
+                        '投资', 
+                        company_node, 
+                        **self._create_relationship_properties(rel)
+                    )
+                    self.graph.create(relationship)
+                    created_count += 1
+                    
+                elif rel_type == 'INVESTS_IN_INDUSTRY':
+                    # 投资方投资行业的关系
+                    # 直接查找投资方节点
+                    investor_node = investor_name_map.get(source)
+                    
+                    # 如果找不到投资方节点，尝试模糊匹配
+                    if not investor_node:
+                        investor_node = self._fuzzy_match_node(source, investor_name_map)
+                    
+                    # 如果仍然找不到，创建新的投资方节点
+                    if not investor_node:
+                        investor_node = Node(
+                            "投资方",
+                            name=source,
+                            投资方名称=source,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(investor_node)
+                        logger.info(f"创建新的投资方节点: {source}")
+                    
+                    # 查找行业节点
+                    industry_node = self.node_matcher.match(
+                        "行业", 
+                        行业名称=target
+                    ).first()
+                    
+                    # 如果找不到行业节点，创建新的行业节点
+                    if not industry_node:
+                        industry_node = Node(
+                            "行业",
+                            行业名称=target,
+                            name=target,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(industry_node)
+                        logger.info(f"创建新的行业节点: {target}")
+                    
+                    # 创建关系
+                    relationship = Relationship(
+                        investor_node, 
+                        '投资行业', 
+                        industry_node, 
+                        **self._create_relationship_properties(rel)
+                    )
+                    self.graph.create(relationship)
+                    created_count += 1
+                    
+                elif rel_type == 'PREFERS_ROUND':
+                    # 投资方偏好轮次的关系
+                    # 直接查找投资方节点
+                    investor_node = investor_name_map.get(source)
+                    
+                    # 如果找不到投资方节点，尝试模糊匹配
+                    if not investor_node:
+                        investor_node = self._fuzzy_match_node(source, investor_name_map)
+                    
+                    # 如果仍然找不到，创建新的投资方节点
+                    if not investor_node:
+                        investor_node = Node(
+                            "投资方",
+                            name=source,
+                            投资方名称=source,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(investor_node)
+                        logger.info(f"创建新的投资方节点: {source}")
+                    
+                    # 创建或获取轮次节点
+                    round_node = self.node_matcher.match(
+                        "轮次", 
+                        轮次名称=target
+                    ).first()
+                    
+                    if not round_node:
+                        # 如果轮次节点不存在，创建它
+                        round_node = Node(
+                            "轮次",
+                            轮次名称=target,
+                            name=target,
+                            数据来源='知识图谱构建系统',
+                            创建时间=datetime.now().isoformat()
+                        )
+                        self.graph.create(round_node)
+                    
+                    # 创建关系
+                    relationship = Relationship(
+                        investor_node, 
+                        '偏好轮次', 
+                        round_node, 
+                        **self._create_relationship_properties(rel)
+                    )
+                    self.graph.create(relationship)
+                    created_count += 1
                 
-                # 查找公司节点
-                company_node = self.node_matcher.match(
-                    "公司", 
-                    公司ID=company_id
-                ).first()
-                
-                if not investor_node or not company_node:
-                    logger.warning(f"找不到对应的节点 - 投资方: {investor_id}, 公司: {company_id}")
-                    continue
-                
-                # 创建关系属性
-                rel_properties = {
-                    '投资金额': amount,
-                    '投资轮次': round_type,
-                    '投资时间': date,
-                    '投资比例': ratio,
-                    '数据来源': '知识图谱构建系统',
-                    '创建时间': datetime.now().isoformat()
-                }
-                
-                # 创建投资关系（投资方 -> 公司）
-                investment_rel = Relationship(
-                    investor_node, 
-                    '投资', 
-                    company_node, 
-                    **rel_properties
-                )
-                self.graph.create(investment_rel)
-                created_count += 1
-                
-                if created_count % 1000 == 0:
+                if created_count % 500 == 0:
                     logger.info(f"已创建 {created_count} 个投资关系")
             
             logger.info(f"投资关系创建完成: {created_count} 个")
@@ -344,7 +564,84 @@ class KnowledgeGraphExporter:
             logger.error(f"创建投资关系失败: {e}")
             raise
     
-    def create_industry_relationships(self, companies: Dict[str, Dict]) -> int:
+    def _fuzzy_match_node(self, name: str, name_map: Dict) -> Node:
+        """模糊匹配节点"""
+        # 直接匹配
+        if name in name_map:
+            return name_map[name]
+        
+        # 简单的模糊匹配：检查名称是否包含在节点名称中
+        for node_name, node in name_map.items():
+            if name in node_name or node_name in name:
+                return node
+        
+        # 尝试去除空格和特殊字符后匹配
+        cleaned_name = ''.join(c for c in name if c.isalnum())
+        for node_name, node in name_map.items():
+            cleaned_node_name = ''.join(c for c in node_name if c.isalnum())
+            if cleaned_name in cleaned_node_name or cleaned_node_name in cleaned_name:
+                return node
+        
+        # 尝试分割名称并匹配部分
+        name_parts = name.split()
+        if len(name_parts) > 1:
+            for part in name_parts:
+                if len(part) > 2:  # 只匹配长度大于2的部分
+                    for node_name, node in name_map.items():
+                        if part in node_name:
+                            return node
+        
+        # 使用更高级的相似度计算
+        best_match = None
+        best_score = 0
+        for node_name, node in name_map.items():
+            # 计算Jaccard相似度
+            name_chars = set(name)
+            node_name_chars = set(node_name)
+            intersection = name_chars & node_name_chars
+            union = name_chars | node_name_chars
+            
+            if len(union) > 0:
+                jaccard_similarity = len(intersection) / len(union)
+            else:
+                jaccard_similarity = 0
+            
+            # 计算字符序列相似度
+            common_substrings = 0
+            min_len = min(len(name), len(node_name))
+            for i in range(min_len - 1):
+                if name[i:i+2] == node_name[i:i+2]:
+                    common_substrings += 1
+            
+            sequence_similarity = common_substrings / (min_len - 1) if min_len > 1 else 0
+            
+            # 综合相似度
+            combined_similarity = 0.7 * jaccard_similarity + 0.3 * sequence_similarity
+            
+            if combined_similarity > best_score and combined_similarity > 0.4:  # 降低相似度阈值
+                best_score = combined_similarity
+                best_match = node
+        
+        return best_match
+    
+    def _create_relationship_properties(self, rel: Dict) -> Dict:
+        """创建关系属性"""
+        rel_properties = {
+            'source_data': rel.get('properties', {}).get('source_data', 'investment_events'),
+            'confidence': rel.get('properties', {}).get('confidence', 0.8),
+            '数据来源': '知识图谱构建系统',
+            '创建时间': datetime.now().isoformat()
+        }
+        
+        # 添加其他属性
+        properties = rel.get('properties', {})
+        for key, value in properties.items():
+            if key not in ['source_data', 'confidence']:
+                rel_properties[key] = value
+        
+        return rel_properties
+    
+    def create_industry_relationships(self, companies: Dict) -> int:
         """创建行业关系"""
         logger.info(f"开始创建行业关系: {len(companies)} 个")
         
@@ -355,15 +652,24 @@ class KnowledgeGraphExporter:
         
         try:
             for company_id, company_data in companies.items():
-                industry = company_data.get('industry')
-                if not industry:
+                company_name = company_data.get('name', '')
+                industry = company_data.get('industry', '')
+                
+                if not company_name or not industry:
                     continue
                 
-                # 查找公司节点
+                # 优先使用name属性查找公司节点
                 company_node = self.node_matcher.match(
                     "公司", 
-                    公司ID=company_id
+                    name=company_name
                 ).first()
+                
+                # 如果找不到公司节点，尝试用name字段查找
+                if not company_node:
+                    company_node = self.node_matcher.match(
+                        "公司", 
+                        name=company_name
+                    ).first()
                 
                 # 查找行业节点
                 industry_node = self.node_matcher.match(
@@ -371,27 +677,24 @@ class KnowledgeGraphExporter:
                     行业名称=industry
                 ).first()
                 
-                if company_node is None or industry_node is None:
-                    logger.warning(f"找不到对应的节点 - 公司: {company_id}, 行业: {industry}")
+                if not company_node or not industry_node:
                     continue
                 
-                # 创建行业关系
+                # 创建关系属性
                 rel_properties = {
                     '数据来源': '知识图谱构建系统',
                     '创建时间': datetime.now().isoformat()
                 }
                 
-                industry_rel = Relationship(
+                # 创建关系
+                relationship = Relationship(
                     company_node, 
-                    '属于行业', 
+                    '属于', 
                     industry_node, 
                     **rel_properties
                 )
-                self.graph.create(industry_rel)
+                self.graph.create(relationship)
                 created_count += 1
-                
-                if created_count % 500 == 0:
-                    logger.info(f"已创建 {created_count} 个行业关系")
             
             logger.info(f"行业关系创建完成: {created_count} 个")
             return created_count
@@ -411,6 +714,7 @@ class KnowledgeGraphExporter:
         companies_raw = kg_data.get('companies', [])
         investors_raw = kg_data.get('investors', [])
         relationships_raw = kg_data.get('relationships', [])
+        structure_relationships_raw = kg_data.get('structure_relationships', [])
         
         # 如果数据是列表格式，转换为字典格式
         if isinstance(companies_raw, list):
@@ -435,6 +739,11 @@ class KnowledgeGraphExporter:
             relationships = relationships_raw
         else:
             relationships = relationships_raw
+            
+        if isinstance(structure_relationships_raw, list):
+            structure_relationships = structure_relationships_raw
+        else:
+            structure_relationships = []
         
         # 清除现有数据（可选）
         if clear_existing:
@@ -456,6 +765,7 @@ class KnowledgeGraphExporter:
         # 创建关系
         export_stats['investment_relationships_created'] = self.create_investment_relationships(relationships)
         export_stats['industry_relationships_created'] = self.create_industry_relationships(companies)
+        export_stats['structure_relationships_created'] = self.create_structure_relationships(structure_relationships)
         
         # 计算总耗时
         end_time = datetime.now()
@@ -467,7 +777,8 @@ class KnowledgeGraphExporter:
         )
         export_stats['total_relationships'] = int(
             export_stats['investment_relationships_created'] + 
-            export_stats['industry_relationships_created']
+            export_stats['industry_relationships_created'] +
+            export_stats['structure_relationships_created']
         )
         
         logger.info("知识图谱导出完成")

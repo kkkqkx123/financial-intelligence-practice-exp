@@ -5,9 +5,63 @@
 
 import re
 import json
+import asyncio
+import httpx
+import os
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 import time
+
+async def call_llm(prompt: str) -> Dict:
+    """调用LLM API的函数"""
+    try:
+        # 获取API配置
+        api_key = os.getenv("LLM_API_KEY")
+        base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        
+        if not api_key:
+            print("警告: 未设置LLM API密钥，使用模拟响应")
+            return {"error": "API密钥未设置"}
+        
+        # 构建API请求
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": os.getenv("LLM_MODEL", "gpt-3.5-turbo"),
+            "messages": [
+                {"role": "system", "content": "你是一个金融领域的专家，专门处理公司、投资机构和投资关系相关的信息。"},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1000
+        }
+        
+        # 发送请求
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json=data
+            )
+            response.raise_for_status()
+            
+            # 解析响应
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+            
+            # 尝试解析JSON响应
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # 如果不是JSON格式，返回原始内容
+                return {"response": content}
+                
+    except Exception as e:
+        print(f"LLM API调用失败: {str(e)}")
+        return {"error": str(e)}
 
 class OptimizedKGBuilder:
     """优化的知识图谱构建器 - 硬编码优先"""
@@ -534,15 +588,15 @@ class OptimizedKGBuilder:
     
     # ==================== LLM 增强阶段 ====================
     
-    def enhance_with_llm(self, failed_links: List[Dict]) -> List[Dict]:
+    async def enhance_with_llm(self, failed_links: List[Dict]) -> List[Dict]:
         """LLM增强处理 - 仅处理硬编码失败的案例"""
         enhanced_results = []
         
         for failed in failed_links:
             if failed['type'] == 'company':
-                result = self._llm_enhance_company_matching(failed)
+                result = await self._llm_enhance_company_matching(failed)
             elif failed['type'] == 'institution':
-                result = self._llm_enhance_institution_matching(failed)
+                result = await self._llm_enhance_institution_matching(failed)
             else:
                 continue
             
@@ -550,7 +604,7 @@ class OptimizedKGBuilder:
         
         return enhanced_results
     
-    def _llm_enhance_company_matching(self, failed: Dict) -> Dict:
+    async def _llm_enhance_company_matching(self, failed: Dict) -> Dict:
         """LLM增强公司匹配"""
         event = failed['event']
         investee_name = event['investee']
@@ -581,11 +635,16 @@ class OptimizedKGBuilder:
         }}
         """
         
-        # 这里应该调用实际的LLM，现在返回模拟结果
-        # result = call_llm(prompt)
-        result = self._simulate_llm_response(investee_name, candidates)
+        # 调用LLM API
+        result = await call_llm(prompt)
         
-        if result['matched_company'] and result['matched_company'] in self.company_index:
+        # 检查是否有错误
+        if "error" in result:
+            print(f"LLM调用出错: {result['error']}")
+            # 使用模拟响应作为后备
+            result = self._simulate_llm_response(investee_name, candidates)
+        
+        if result.get('matched_company') and result['matched_company'] in self.company_index:
             return {
                 'success': True,
                 'type': 'llm_enhanced',
@@ -600,7 +659,7 @@ class OptimizedKGBuilder:
             'reason': 'no_confident_match'
         }
     
-    def _llm_enhance_institution_matching(self, failed: Dict) -> Dict:
+    async def _llm_enhance_institution_matching(self, failed: Dict) -> Dict:
         """LLM增强机构匹配"""
         investor_name = failed['investor_name']
         
@@ -629,10 +688,16 @@ class OptimizedKGBuilder:
         }}
         """
         
-        # result = call_llm(prompt)
-        result = self._simulate_llm_institution_response(investor_name, candidates)
+        # 调用LLM API
+        result = await call_llm(prompt)
         
-        if result['matched_institution'] and result['matched_institution'] in self.institution_index:
+        # 检查是否有错误
+        if "error" in result:
+            print(f"LLM调用出错: {result['error']}")
+            # 使用模拟响应作为后备
+            result = self._simulate_llm_institution_response(investor_name, candidates)
+        
+        if result.get('matched_institution') and result['matched_institution'] in self.institution_index:
             return {
                 'success': True,
                 'type': 'llm_enhanced',
@@ -730,7 +795,7 @@ class OptimizedKGBuilder:
 
 # ==================== 使用示例 ====================
 
-def demo_optimized_workflow():
+async def demo_optimized_workflow():
     """演示优化的工作流程"""
     
     # 模拟数据
@@ -777,7 +842,7 @@ def demo_optimized_workflow():
     # 步骤3: LLM增强（仅处理失败案例）
     if linked_data['failed_links']:
         print(f"\n步骤3: LLM增强处理 {len(linked_data['failed_links'])} 个失败案例...")
-        enhanced_results = builder.enhance_with_llm(linked_data['failed_links'])
+        enhanced_results = await builder.enhance_with_llm(linked_data['failed_links'])
         
         successful_enhancements = sum(1 for r in enhanced_results if r.get('success'))
         print(f"LLM增强成功: {successful_enhancements}")
@@ -792,4 +857,4 @@ def demo_optimized_workflow():
     print(f"  - 效率提升: {stats['efficiency_improvement']}")
 
 if __name__ == "__main__":
-    demo_optimized_workflow()
+    asyncio.run(demo_optimized_workflow())

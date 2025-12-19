@@ -333,6 +333,13 @@ class OptimizedBatchProcessor:
             "error_count": 0,
             "retry_count": 0
         }
+        
+        # 初始化knowledge_graph属性
+        self.knowledge_graph = None
+    
+    def set_knowledge_graph(self, knowledge_graph):
+        """设置知识图谱实例"""
+        self.knowledge_graph = knowledge_graph
     
     async def process_requests(self, requests: List[BatchRequest]) -> List[BatchResult]:
         """处理批量请求"""
@@ -770,6 +777,18 @@ class OptimizedBatchProcessor:
                     result=request_attributes
                 ))
             
+            # 处理所有待处理的增强任务
+            try:
+                enhancement_results = await self.process_all_pending_enhancements()
+                self.stats['enhancements_processed'] = enhancement_results
+            except Exception as e:
+                logger.error(f"处理增强任务时出错: {str(e)}")
+                self.stats['enhancements_processed'] = {
+                    'entity_descriptions': {'processed': 0, 'enhanced': 0},
+                    'industry_classifications': {'processed': 0, 'enhanced': 0},
+                    'investor_standardizations': {'processed': 0, 'enhanced': 0}
+                }
+            
             return results
         except Exception as e:
             # 创建失败结果
@@ -805,7 +824,7 @@ class OptimizedBatchProcessor:
         }
         self.error_handler.error_stats = defaultdict(int)
     
-    def optimize_entity_descriptions(self, entities: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
+    async def optimize_entity_descriptions(self, entities: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
         """优化实体描述"""
         enhanced_entities = {}
         
@@ -813,23 +832,105 @@ class OptimizedBatchProcessor:
             # 复制原始数据
             enhanced_entity = entity_data.copy()
             
-            # 如果没有描述，则生成一个基本描述
+            # 如果没有描述或描述太短，则使用LLM生成描述
             if not enhanced_entity.get('description') or len(enhanced_entity.get('description', '')) < 10:
-                if entity_type == 'company':
-                    name = enhanced_entity.get('name', '')
-                    industry = enhanced_entity.get('industry', '')
-                    location = enhanced_entity.get('location', '')
-                    enhanced_entity['description'] = f"{name}是一家位于{location}的{industry}企业。"
-                elif entity_type == 'investor':
-                    name = enhanced_entity.get('name', '')
-                    investor_type = enhanced_entity.get('type', '')
-                    enhanced_entity['description'] = f"{name}是一家{investor_type}投资机构。"
+                try:
+                    # 构建LLM提示
+                    if entity_type == 'company':
+                        name = enhanced_entity.get('name', '')
+                        industry = enhanced_entity.get('industry', '')
+                        location = enhanced_entity.get('location', '')
+                        
+                        prompt = f"""
+                        任务：为公司生成简洁、专业的描述
+                        
+                        公司名称：{name}
+                        行业：{industry}
+                        地点：{location}
+                        
+                        要求：
+                        1. 生成一段50-100字的简洁公司描述
+                        2. 突出公司的主要业务和特点
+                        3. 语言要专业、客观
+                        
+                        输出格式：
+                        {{
+                            "description": "公司描述内容"
+                        }}
+                        """
+                    elif entity_type == 'investor':
+                        name = enhanced_entity.get('name', '')
+                        investor_type = enhanced_entity.get('type', '')
+                        
+                        prompt = f"""
+                        任务：为投资机构生成简洁、专业的描述
+                        
+                        机构名称：{name}
+                        机构类型：{investor_type}
+                        
+                        要求：
+                        1. 生成一段50-100字的简洁投资机构描述
+                        2. 突出机构的投资领域和特点
+                        3. 语言要专业、客观
+                        
+                        输出格式：
+                        {{
+                            "description": "投资机构描述内容"
+                        }}
+                        """
+                    else:
+                        # 其他类型实体，使用基本描述
+                        if entity_type == 'company':
+                            name = enhanced_entity.get('name', '')
+                            industry = enhanced_entity.get('industry', '')
+                            location = enhanced_entity.get('location', '')
+                            enhanced_entity['description'] = f"{name}是一家位于{location}的{industry}企业。"
+                        elif entity_type == 'investor':
+                            name = enhanced_entity.get('name', '')
+                            investor_type = enhanced_entity.get('type', '')
+                            enhanced_entity['description'] = f"{name}是一家{investor_type}投资机构。"
+                        
+                        enhanced_entities[entity_id] = enhanced_entity
+                        continue
+                    
+                    # 调用LLM生成描述
+                    result = await self.llm_processor.generate_completion(prompt)
+                    
+                    # 检查结果
+                    if isinstance(result, dict) and 'description' in result:
+                        enhanced_entity['description'] = result['description']
+                    elif isinstance(result, str):
+                        enhanced_entity['description'] = result
+                    else:
+                        # 回退到基本描述
+                        if entity_type == 'company':
+                            name = enhanced_entity.get('name', '')
+                            industry = enhanced_entity.get('industry', '')
+                            location = enhanced_entity.get('location', '')
+                            enhanced_entity['description'] = f"{name}是一家位于{location}的{industry}企业。"
+                        elif entity_type == 'investor':
+                            name = enhanced_entity.get('name', '')
+                            investor_type = enhanced_entity.get('type', '')
+                            enhanced_entity['description'] = f"{name}是一家{investor_type}投资机构。"
+                
+                except Exception as e:
+                    print(f"生成实体描述时出错: {str(e)}")
+                    # 回退到基本描述
+                    if entity_type == 'company':
+                        name = enhanced_entity.get('name', '')
+                        industry = enhanced_entity.get('industry', '')
+                        location = enhanced_entity.get('location', '')
+                        enhanced_entity['description'] = f"{name}是一家位于{location}的{industry}企业。"
+                    elif entity_type == 'investor':
+                        name = enhanced_entity.get('name', '')
+                        investor_type = enhanced_entity.get('type', '')
+                        enhanced_entity['description'] = f"{name}是一家{investor_type}投资机构。"
             
             enhanced_entities[entity_id] = enhanced_entity
         
         return enhanced_entities
     
-    def optimize_industry_classification(self, companies: Dict[str, Any]) -> Dict[str, Any]:
+    async def optimize_industry_classification(self, companies: Dict[str, Any]) -> Dict[str, Any]:
         """优化行业分类"""
         industry_classifications = {}
         
@@ -838,73 +939,210 @@ class OptimizedBatchProcessor:
             industry = company_data.get('industry', '')
             description = company_data.get('description', '')
             
-            # 简单的行业分类逻辑
-            if not industry and description:
-                # 根据描述推断行业
-                if '科技' in description or '技术' in description or '软件' in description:
-                    industry = '科技'
-                elif '金融' in description or '投资' in description or '银行' in description:
-                    industry = '金融'
-                elif '医疗' in description or '健康' in description or '生物' in description:
-                    industry = '医疗健康'
-                elif '教育' in description or '培训' in description:
-                    industry = '教育'
-                elif '零售' in description or '电商' in description or '销售' in description:
-                    industry = '零售'
-                else:
-                    industry = '其他'
+            # 如果已有行业分类且置信度高，直接使用
+            if industry and company_data.get('industry_confidence', 0) > 0.8:
+                industry_classifications[company_id] = {
+                    'company_id': company_id,
+                    'company_name': name,
+                    'industry': industry,
+                    'confidence': company_data.get('industry_confidence', 0.8)
+                }
+                continue
             
-            industry_classifications[company_id] = {
-                'company_id': company_id,
-                'company_name': name,
-                'industry': industry,
-                'confidence': 0.8 if industry else 0.0
-            }
+            # 如果没有行业分类或置信度低，使用LLM进行分类
+            try:
+                prompt = f"""
+                任务：为公司进行行业分类
+                
+                公司名称：{name}
+                当前行业：{industry if industry else "未分类"}
+                公司描述：{description}
+                
+                要求：
+                1. 根据公司名称和描述，确定最合适的行业分类
+                2. 从以下行业中选择一个最合适的：科技、金融、医疗健康、教育、零售、制造、房地产、能源、交通、文娱、企业服务、其他
+                3. 评估分类的置信度（0-1之间的数值）
+                
+                输出格式：
+                {{
+                    "industry": "行业分类",
+                    "confidence": 0.9,
+                    "reasoning": "分类理由"
+                }}
+                """
+                
+                # 调用LLM进行行业分类
+                result = await self.llm_processor.generate_completion(prompt)
+                
+                # 检查结果
+                if isinstance(result, dict) and 'industry' in result:
+                    industry_classifications[company_id] = {
+                        'company_id': company_id,
+                        'company_name': name,
+                        'industry': result['industry'],
+                        'confidence': result.get('confidence', 0.8),
+                        'reasoning': result.get('reasoning', '')
+                    }
+                else:
+                    # 回退到简单分类逻辑
+                    fallback_industry = self._simple_industry_classification(description)
+                    industry_classifications[company_id] = {
+                        'company_id': company_id,
+                        'company_name': name,
+                        'industry': fallback_industry,
+                        'confidence': 0.6,
+                        'reasoning': '回退到简单分类逻辑'
+                    }
+            
+            except Exception as e:
+                print(f"行业分类时出错: {str(e)}")
+                # 回退到简单分类逻辑
+                fallback_industry = self._simple_industry_classification(description)
+                industry_classifications[company_id] = {
+                    'company_id': company_id,
+                    'company_name': name,
+                    'industry': fallback_industry,
+                    'confidence': 0.6,
+                    'reasoning': '回退到简单分类逻辑'
+                }
         
         return industry_classifications
     
-    def optimize_investor_name_standardization(self, investor_names: Set[str]) -> Dict[str, str]:
+    def _simple_industry_classification(self, description: str) -> str:
+        """简单的行业分类逻辑（作为回退方案）"""
+        if not description:
+            return "其他"
+        
+        # 根据描述推断行业
+        if '科技' in description or '技术' in description or '软件' in description or '互联网' in description:
+            return '科技'
+        elif '金融' in description or '投资' in description or '银行' in description or '保险' in description:
+            return '金融'
+        elif '医疗' in description or '健康' in description or '生物' in description or '医药' in description:
+            return '医疗健康'
+        elif '教育' in description or '培训' in description or '学校' in description:
+            return '教育'
+        elif '零售' in description or '电商' in description or '销售' in description or '商店' in description:
+            return '零售'
+        elif '制造' in description or '工厂' in description or '生产' in description:
+            return '制造'
+        elif '房产' in description or '房地产' in description or '地产' in description:
+            return '房地产'
+        elif '能源' in description or '电力' in description or '石油' in description:
+            return '能源'
+        elif '交通' in description or '汽车' in description or '运输' in description:
+            return '交通'
+        elif '文娱' in description or '娱乐' in description or '媒体' in description:
+            return '文娱'
+        elif '企业服务' in description or '服务' in description:
+            return '企业服务'
+        else:
+            return '其他'
+    
+    async def optimize_investor_name_standardization(self, investor_names: Set[str]) -> Dict[str, str]:
         """优化投资方名称标准化"""
         standardized_names = {}
         
         for name in investor_names:
-            if not name:
+            # 如果名称已经是标准格式（包含常见投资机构关键词），直接使用
+            if any(keyword in name for keyword in ['资本', '投资', '基金', '创投', 'Venture', 'Capital', 'Investment', 'Fund']):
+                standardized_names[name] = name
                 continue
+            
+            # 使用LLM进行名称标准化
+            try:
+                prompt = f"""
+                任务：标准化投资机构名称
                 
-            # 简单的名称标准化逻辑
-            standardized_name = name
-            
-            # 移除常见的后缀
-            suffixes = ['有限公司', '有限责任公司', '集团', '资本', '投资', '基金管理', '资产管理']
-            for suffix in suffixes:
-                if standardized_name.endswith(suffix):
-                    standardized_name = standardized_name[:-len(suffix)]
-                    break
-            
-            # 移除常见的前缀
-            prefixes = ['中国', '北京', '上海', '深圳', '杭州']
-            for prefix in prefixes:
-                if standardized_name.startswith(prefix):
-                    standardized_name = standardized_name[len(prefix):]
-                    break
-            
-            # 确保名称不为空
-            if not standardized_name:
-                standardized_name = name
+                原始名称：{name}
                 
-            standardized_names[name] = standardized_name
+                要求：
+                1. 识别投资机构的标准名称
+                2. 保留机构的核心标识（如"资本"、"投资"、"基金"等）
+                3. 去除多余的描述性词汇
+                4. 如果无法确定标准名称，返回原始名称
+                
+                输出格式：
+                {{
+                    "standardized_name": "标准名称",
+                    "confidence": 0.9,
+                    "reasoning": "标准化理由"
+                }}
+                """
+                
+                # 调用LLM进行名称标准化
+                result = await self.llm_processor.generate_completion(prompt)
+                
+                # 检查结果
+                if isinstance(result, dict) and 'standardized_name' in result:
+                    standardized_names[name] = result['standardized_name']
+                else:
+                    # 回退到简单标准化逻辑
+                    fallback_name = self._simple_investor_name_standardization(name)
+                    standardized_names[name] = fallback_name
+            
+            except Exception as e:
+                print(f"投资方名称标准化时出错: {str(e)}")
+                # 回退到简单标准化逻辑
+                fallback_name = self._simple_investor_name_standardization(name)
+                standardized_names[name] = fallback_name
         
         return standardized_names
     
-    def process_all_pending_enhancements(self) -> Dict[str, Any]:
+    def _simple_investor_name_standardization(self, name: str) -> str:
+        """简单的投资方名称标准化逻辑（作为回退方案）"""
+        # 去除常见的非核心词汇
+        core_name = name
+        non_core_words = ['有限公司', '有限责任公司', '股份有限公司', '集团', '控股', '企业']
+        
+        for word in non_core_words:
+            core_name = core_name.replace(word, '')
+        
+        # 如果去除后名称太短，返回原始名称
+        if len(core_name) < 2:
+            return name
+        
+        # 确保包含投资相关关键词
+        if not any(keyword in core_name for keyword in ['资本', '投资', '基金', '创投', 'Venture', 'Capital', 'Investment', 'Fund']):
+            # 如果没有投资相关关键词，添加"投资"
+            core_name += "投资"
+        
+        return core_name
+    
+    async def process_all_pending_enhancements(self) -> Dict[str, Any]:
         """处理所有待处理的增强任务"""
-        # 模拟处理增强任务
-        return {
-            'processed': 0,
-            'successful': 0,
-            'failed': 0,
-            'errors': []
+        # 模拟处理结果
+        results = {
+            'entity_descriptions': {'processed': 0, 'enhanced': 0},
+            'industry_classifications': {'processed': 0, 'enhanced': 0},
+            'investor_standardizations': {'processed': 0, 'enhanced': 0}
         }
+        
+        # 获取待处理的实体
+        companies = self.knowledge_graph.get_companies()
+        investors = self.knowledge_graph.get_investors()
+        
+        # 处理实体描述优化
+        if companies:
+            entity_results = await self.optimize_entity_descriptions(companies)
+            results['entity_descriptions']['processed'] = len(companies)
+            results['entity_descriptions']['enhanced'] = len(entity_results)
+        
+        # 处理行业分类优化
+        if companies:
+            industry_results = await self.optimize_industry_classification(companies)
+            results['industry_classifications']['processed'] = len(companies)
+            results['industry_classifications']['enhanced'] = len(industry_results)
+        
+        # 处理投资方名称标准化
+        if investors:
+            investor_names = {inv.get('name', '') for inv in investors if inv.get('name')}
+            if investor_names:
+                investor_results = await self.optimize_investor_name_standardization(investor_names)
+                results['investor_standardizations']['processed'] = len(investor_names)
+                results['investor_standardizations']['enhanced'] = len(investor_results)
+        
+        return results
 
 
 # 全局批量处理器实例
