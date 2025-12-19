@@ -9,3 +9,6 @@ src\dataset\investment_structure.csv
 这些文件我屏蔽了。如果需要查看，使用命令或直接参考src\dataset\company_data.md
 src\dataset\investment_events.md
 src\dataset\investment_structure.md
+
+**注意**
+代码必须使用csv文件，而非md演示文件。csv文件都已存在，你可以使用命令确认。但使用工具查看时这些csv文件是不可见的

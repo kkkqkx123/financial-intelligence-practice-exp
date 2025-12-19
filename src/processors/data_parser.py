@@ -10,6 +10,12 @@ from .config import (
     ROUND_MAPPING, AMOUNT_RULES, CAPITAL_RULES, 
     DATE_PATTERNS, PERFORMANCE_CONFIG
 )
+from .field_mapping import (
+    COMPANY_FIELD_MAPPING, 
+    INVESTMENT_EVENT_FIELD_MAPPING, 
+    INVESTOR_FIELD_MAPPING,
+    apply_field_mapping
+)
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -30,12 +36,14 @@ class DataParser:
     # ==================== 公司数据解析 ====================
     
     def parse_companies(self, data: Union[str, List[Dict]]) -> List[Dict]:
-        """解析公司数据"""
+        """解析公司数据 - 增强错误处理和日志"""
         companies = []
+        logger.info(f"开始解析公司数据，输入类型: {type(data)}")
         
         # 如果是列表，说明是已经解析好的字典数据
         if isinstance(data, list):
-            for item in data:
+            logger.info(f"处理字典列表数据，共 {len(data)} 条记录")
+            for i, item in enumerate(data):
                 try:
                     if isinstance(item, dict):
                         company = {
@@ -56,26 +64,43 @@ class DataParser:
                         companies.append(company)
                         self.stats['companies_processed'] += 1
                         self.stats['total_records'] += 1
+                    else:
+                        logger.warning(f"跳过非字典项 {i}: {type(item)}")
+                        self.stats['errors'] += 1
                 except Exception as e:
                     self.stats['errors'] += 1
-                    logger.error(f"解析公司数据失败: {item}... 错误: {e}")
-            return companies
+                    logger.error(f"解析公司数据失败 (索引 {i}): {str(item)[:100]}... 错误: {e}")
+            logger.info(f"字典列表处理完成，成功: {len(companies)} 条，失败: {self.stats['errors']} 条")
+        
+        # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用公司数据字段映射")
+        mapped_companies = apply_field_mapping(companies, COMPANY_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_companies)} 条记录")
+        
+        return mapped_companies
         
         # 如果是字符串，使用原有的解析逻辑
+        logger.info("处理字符串格式数据")
         text = str(data)
         lines = text.strip().split('\n')
+        logger.info(f"字符串数据共 {len(lines)} 行")
         
         # 跳过统计行和表头
         data_started = False
-        for line in lines:
+        line_count = 0
+        for line_num, line in enumerate(lines, 1):
             if line.startswith('公司简称,公司全称,公司描述,注册名称'):
                 data_started = True
+                logger.info(f"在第 {line_num} 行找到表头")
                 continue
             if not data_started or not line.strip():
                 continue
             
+            line_count += 1
             try:
                 fields = self._smart_split(line)
+                logger.debug(f"第 {line_num} 行分割为 {len(fields)} 个字段")
+                
                 if len(fields) >= 11:
                     company = {
                         'short_name': fields[0].strip(),
@@ -95,17 +120,29 @@ class DataParser:
                     companies.append(company)
                     self.stats['companies_processed'] += 1
                     self.stats['total_records'] += 1
+                else:
+                    logger.warning(f"第 {line_num} 行字段数不足: {len(fields)} < 11")
+                    self.stats['errors'] += 1
+                    
             except Exception as e:
                 self.stats['errors'] += 1
-                logger.error(f"解析公司数据失败: {line[:50]}... 错误: {e}")
+                logger.error(f"解析公司数据失败 (第 {line_num} 行): {line[:100]}... 错误: {e}")
         
-        return companies
+        logger.info(f"字符串格式处理完成，成功: {len(companies)} 条，失败: {self.stats['errors']} 条，处理行数: {line_count}")
+        
+        # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用公司数据字段映射")
+        mapped_companies = apply_field_mapping(companies, COMPANY_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_companies)} 条记录")
+        
+        return mapped_companies
     
     # ==================== 投资事件解析 ====================
     
     def parse_investment_events(self, data: Union[str, List[Dict]]) -> List[Dict]:
-        """解析投资事件数据"""
+        """解析投资事件数据 - 增强错误处理和日志"""
         events = []
+        logger.info(f"开始解析投资事件数据，输入类型: {type(data)}")
         
         # 如果是列表，说明是已经解析好的字典数据
         if isinstance(data, list):
@@ -128,7 +165,12 @@ class DataParser:
                 except Exception as e:
                     self.stats['errors'] += 1
                     logger.error(f"解析投资事件数据失败: {item}... 错误: {e}")
-            return events
+            # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用投资事件字段映射")
+        mapped_events = apply_field_mapping(events, INVESTMENT_EVENT_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_events)} 条记录")
+        
+        return mapped_events
         
         # 如果是字符串，使用原有的解析逻辑
         text = str(data)
@@ -162,7 +204,12 @@ class DataParser:
                 self.stats['errors'] += 1
                 logger.error(f"解析投资事件失败: {line[:50]}... 错误: {e}")
         
-        return events
+        # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用投资事件字段映射")
+        mapped_events = apply_field_mapping(events, INVESTMENT_EVENT_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_events)} 条记录")
+        
+        return mapped_events
     
     # ==================== 投资机构解析 ====================
     
@@ -190,7 +237,12 @@ class DataParser:
                 except Exception as e:
                     self.stats['errors'] += 1
                     logger.error(f"解析投资机构数据失败: {item}... 错误: {e}")
-            return institutions
+            # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用投资机构字段映射")
+        mapped_institutions = apply_field_mapping(institutions, INVESTOR_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_institutions)} 条记录")
+        
+        return mapped_institutions
         
         # 如果是字符串，使用原有的解析逻辑
         text = str(data)
@@ -228,7 +280,12 @@ class DataParser:
                 self.stats['errors'] += 1
                 logger.error(f"解析投资机构失败: {line[:50]}... 错误: {e}")
         
-        return institutions
+        # 应用字段映射，转换为构建器期望的格式
+        logger.info("应用投资机构字段映射")
+        mapped_institutions = apply_field_mapping(institutions, INVESTOR_FIELD_MAPPING)
+        logger.info(f"字段映射完成，共 {len(mapped_institutions)} 条记录")
+        
+        return mapped_institutions
     
     # ==================== 核心解析函数 ====================
     
@@ -414,27 +471,62 @@ class DataParser:
         return scale_str
     
     def parse_csv_data(self, csv_content: str) -> List[Dict]:
-        """解析CSV数据内容"""
+        """解析CSV数据内容 - 支持包含NUL字符的文件"""
         import csv
         from io import StringIO
         
         result = []
         try:
-            csv_reader = csv.DictReader(StringIO(csv_content))
-            for row in csv_reader:
-                # 清理和标准化数据
-                cleaned_row = {}
-                for key, value in row.items():
-                    # 去除前后空格
-                    if isinstance(value, str):
-                        cleaned_row[key.strip()] = value.strip()
+            # 清理NUL字符和其他不可见字符
+            cleaned_content = csv_content.replace('\x00', '').replace('\ufeff', '')
+            
+            # 使用StringIO创建文件对象
+            string_buffer = StringIO(cleaned_content)
+            
+            # 逐行读取，跳过包含NUL字符的行
+            lines = []
+            for i, line in enumerate(string_buffer):
+                if '\x00' not in line:
+                    lines.append(line)
+                else:
+                    logger.warning(f"跳过包含NUL字符的行 {i+1}: {line[:50]}...")
+            
+            if not lines:
+                logger.warning("CSV内容为空或所有行都包含NUL字符")
+                return []
+            
+            # 重新构建CSV内容
+            cleaned_csv = ''.join(lines)
+            string_buffer = StringIO(cleaned_csv)
+            
+            # 解析CSV
+            csv_reader = csv.DictReader(string_buffer)
+            for row_num, row in enumerate(csv_reader, 1):
+                try:
+                    # 清理和标准化数据
+                    cleaned_row = {}
+                    for key, value in row.items():
+                        if key:  # 确保键不为空
+                            if isinstance(value, str):
+                                cleaned_row[key.strip()] = value.strip()
+                            else:
+                                cleaned_row[key.strip()] = value
+                    
+                    # 确保有有效数据
+                    if any(cleaned_row.values()):
+                        result.append(cleaned_row)
                     else:
-                        cleaned_row[key.strip()] = value
-                result.append(cleaned_row)
+                        logger.warning(f"跳过空行 {row_num}")
+                        
+                except Exception as e:
+                    logger.warning(f"解析行 {row_num} 失败: {e}")
+                    continue
+                    
         except Exception as e:
             logger.error(f"CSV解析失败: {e}")
             return []
         
+        logger.info(f"CSV解析完成: {len(result)} 条有效记录")
         return result
     
     def get_stats(self) -> Dict[str, Any]:

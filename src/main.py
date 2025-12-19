@@ -34,12 +34,18 @@ try:
 except ImportError:
     NEO4J_INTEGRATION_AVAILABLE = False
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# 配置日志 - 使用新的日志模块
+from utils.logger import setup_logger, get_logger
+
+# 设置主日志器
+setup_logger(
+    name='financial_kg',
+    level='INFO',
+    log_file='output/pipeline.log',
+    console_output=True,
+    file_output=True
 )
-logger = logging.getLogger(__name__)
+logger = get_logger('financial_kg')
 
 
 class KnowledgeGraphPipeline:
@@ -123,13 +129,36 @@ class KnowledgeGraphPipeline:
         return loaded_data
     
     def _parse_csv_file(self, file_path: Path) -> List[Dict]:
-        """直接解析CSV文件"""
+        """直接解析CSV文件 - 支持包含NUL字符的文件"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            return self.parser.parse_csv_data(content)
+            logger.info(f"开始解析CSV文件: {file_path}")
+            
+            # 首先尝试UTF-8编码
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                logger.info(f"文件 {file_path.name} 使用UTF-8编码，大小: {len(content)} 字符")
+            except UnicodeDecodeError:
+                # 如果UTF-8失败，尝试其他编码
+                logger.warning(f"UTF-8解码失败，尝试其他编码: {file_path.name}")
+                try:
+                    with open(file_path, 'r', encoding='gbk') as f:
+                        content = f.read()
+                    logger.info(f"文件 {file_path.name} 使用GBK编码")
+                except UnicodeDecodeError:
+                    # 最后使用错误忽略模式
+                    logger.warning(f"尝试忽略编码错误: {file_path.name}")
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+            
+            # 使用改进的CSV解析器
+            result = self.parser.parse_csv_data(content)
+            logger.info(f"CSV文件 {file_path.name} 解析完成: {len(result)} 条记录")
+            return result
+            
         except Exception as e:
             logger.error(f"CSV文件解析失败 {file_path}: {e}")
+            logger.error(f"错误详情: {type(e).__name__}: {str(e)}")
             return []
     
     def _parse_md_csv_file(self, file_path: Path) -> List[Dict]:
@@ -576,7 +605,7 @@ def main():
     if args.enable_neo4j:
         neo4j_config = {
             'uri': args.neo4j_uri or os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-            'user': args.neo4j_user or os.getenv('NEO4J_USER', 'neo4j'),
+            'username': args.neo4j_user or os.getenv('NEO4J_USERNAME', 'neo4j'),
             'password': args.neo4j_password or os.getenv('NEO4J_PASSWORD', 'password')
         }
     
