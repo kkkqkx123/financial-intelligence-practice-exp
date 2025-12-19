@@ -51,14 +51,14 @@ DATE_PATTERNS = [
     (r'\d{4}\.\d{1,2}\.\d{1,2}', lambda x: x.replace('.', '-')),  # YYYY.MM.DD
 ]
 
-# 置信度阈值配置
+# 置信度阈值配置 - 进一步放宽匹配要求
 CONFIDENCE_THRESHOLDS = {
     'exact_match': 1.0,
-    'alias_match': 0.95,
-    'substring_match': 0.8,
-    'fuzzy_match': 0.7,
-    'llm_match': 0.6,
-    'entity_linking': 0.7
+    'alias_match': 0.9,  # 从0.95降低到0.9
+    'substring_match': 0.6,  # 从0.8降低到0.6
+    'fuzzy_match': 0.5,  # 从0.7降低到0.5
+    'llm_match': 0.4,  # 从0.6降低到0.4
+    'entity_linking': 0.5  # 从0.7降低到0.5
 }
 
 # LLM调用配置
@@ -66,7 +66,7 @@ LLM_CONFIG = {
     'max_retries': 3,
     'timeout': 30,
     'batch_size': 50,  # 批处理大小
-    'confidence_threshold': 0.7,  # 低于此阈值才调用LLM
+    'confidence_threshold': 0.5,  # 低于此阈值才调用LLM（从0.7降低到0.5）
     'cache_enabled': True,
     'cache_size': 1000
 }

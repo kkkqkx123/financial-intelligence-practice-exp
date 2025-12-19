@@ -298,12 +298,12 @@ class EntityMatcher:
                 'reason': '别名匹配成功'
             }
         
-        # 3. 简称匹配 - 降低阈值
+        # 3. 简称匹配 - 进一步降低阈值
         abbreviated_result = self.abbreviated_match(name, target_entities)
         if abbreviated_result:
             matched_entity, confidence = abbreviated_result
-            # 降低简称匹配的阈值要求
-            if confidence >= 0.4:  # 从原来的0.5降低到0.4
+            # 进一步降低简称匹配的阈值要求
+            if confidence >= 0.2:  # 从0.3降低到0.2
                 return {
                     'success': True,
                     'matched_entity': matched_entity,
@@ -313,8 +313,8 @@ class EntityMatcher:
                     'reason': f'简称匹配成功，相似度: {confidence:.2f}'
                 }
         
-        # 4. 模糊匹配 - 降低阈值
-        fuzzy_result = self.fuzzy_match(name, target_entities, threshold=0.6)  # 从原来的0.8降低到0.6
+        # 4. 模糊匹配 - 进一步降低阈值
+        fuzzy_result = self.fuzzy_match(name, target_entities, threshold=0.4)  # 从0.5降低到0.4
         if fuzzy_result:
             matched_entity, confidence = fuzzy_result
             return {
@@ -339,14 +339,14 @@ class EntityMatcher:
             
             # 检查子串匹配
             if normalized_name in normalized_entity or normalized_entity in normalized_name:
-                similarity = max(similarity, 0.7)
+                similarity = max(similarity, 0.5)  # 从0.6降低到0.5
             
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = entity
         
-        # 如果最佳匹配的相似度超过0.4，则返回匹配结果
-        if best_match and best_similarity > 0.4:
+        # 如果最佳匹配的相似度超过0.2，则返回匹配结果
+        if best_match and best_similarity > 0.2:  # 从0.3降低到0.2
             return {
                 'success': True,
                 'matched_entity': best_match,
@@ -366,7 +366,7 @@ class EntityMatcher:
                 # 计算包含比例
                 if len(normalized_name) > 0:
                     contain_ratio = min(len(normalized_name), len(normalized_entity)) / max(len(normalized_name), len(normalized_entity))
-                    if contain_ratio > 0.4:  # 包含比例超过40%
+                    if contain_ratio > 0.2:  # 包含比例超过20%（从30%降低）
                         return {
                             'success': True,
                             'matched_entity': entity,

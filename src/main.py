@@ -88,11 +88,13 @@ class Pipeline:
         logger.info("开始加载数据文件")
         
         # 支持多种文件格式，按优先级顺序尝试
+        # 完全跳过公司数据加载
         data_file_mappings = {
-            'companies': ['company_data.csv', 'company_data.md'],
-            'investment_events': ['investment_events.csv', 'investment_events.md'],
-            'investors': ['investment_structure.csv', 'investment_structure.md'],
-            'investment_structures': ['investment_structure.csv', 'investment_structure.md']
+            'investment_events': ['investment_events.csv'],
+            'investors': ['investment_structure.csv'],
+            'investment_structures': ['investment_structure.csv']
+            # 注释掉公司数据，完全跳过加载
+            # 'companies': ['company_data.md']
         }
         
         loaded_data: Dict[str, List[Dict]] = {}
@@ -262,8 +264,15 @@ class Pipeline:
         investors_raw = parsed_data.get('investors', [])
         investment_structures_raw = parsed_data.get('investment_structures', [])
 
-        company_validation = self.validator.validate_company_data(companies_raw)
-        logger.info(f"公司数据验证：{company_validation['valid_records']}/{company_validation['total_records']} 有效")
+        # 检查是否有公司数据，如果没有则跳过相关验证和构建
+        has_companies = len(companies_raw) > 0
+        
+        if has_companies:
+            company_validation = self.validator.validate_company_data(companies_raw)
+            logger.info(f"公司数据验证：{company_validation['valid_records']}/{company_validation['total_records']} 有效")
+        else:
+            company_validation = {'valid_records': 0, 'total_records': 0, 'valid': True}
+            logger.info("跳过公司数据验证（无公司数据）")
 
         event_validation = self.validator.validate_investment_event_data(investment_events_raw)
         logger.info(f"投资事件验证：{event_validation['valid_records']}/{event_validation['total_records']} 有效")
@@ -276,7 +285,7 @@ class Pipeline:
 
         # 步骤2：构建实体
         logger.info("步骤2：构建实体...")
-        companies = self.builder.build_company_entities(companies_raw)
+        companies = self.builder.build_company_entities(companies_raw) if has_companies else {}
         investors = self.builder.build_investor_entities(investors_raw)
         
         # 对投资事件数据进行解析和字段映射
@@ -298,16 +307,70 @@ class Pipeline:
         logger.info("步骤3：LLM增强优化...")
         # 设置知识图谱到optimizer
         self.optimizer.set_knowledge_graph(self.builder.knowledge_graph)
-        enhanced_companies = await self.optimizer.optimize_entity_descriptions(companies, 'company')
+        
+        # 实体描述优化 - 完成后自动保存
+        enhanced_companies = await self.optimizer.optimize_entity_descriptions(companies, 'company') if has_companies else {}
         enhanced_investors = await self.optimizer.optimize_entity_descriptions(investors, 'investor')
-        industry_classifications = await self.optimizer.optimize_industry_classification(enhanced_companies)
+        
+        # 自动保存实体描述优化结果
+        await self._auto_save_llm_results({
+            'stage': 'entity_description_enhancement',
+            'enhanced_companies': enhanced_companies,
+            'enhanced_investors': enhanced_investors,
+            'companies': companies,
+            'investors': investors,
+            'relationships': relationships
+        })
+        
+        # 行业分类优化 - 完成后自动保存（仅在存在公司数据时执行）
+        industry_classifications = {}
+        if has_companies and enhanced_companies:
+            industry_classifications = await self.optimizer.optimize_industry_classification(enhanced_companies)
+            
+            # 自动保存行业分类结果
+            await self._auto_save_llm_results({
+                'stage': 'industry_classification',
+                'industry_classifications': industry_classifications,
+                'enhanced_companies': enhanced_companies,
+                'enhanced_investors': enhanced_investors,
+                'relationships': relationships
+            })
+        else:
+            logger.info("跳过行业分类优化（无公司数据）")
+        
+        # 投资方名称标准化 - 完成后自动保存
         investor_names = {i.get('name', '') for i in investors_raw if i.get('name')}
         standardized_names = await self.optimizer.optimize_investor_name_standardization(investor_names)
+        
+        # 自动保存投资方名称标准化结果
+        await self._auto_save_llm_results({
+            'stage': 'investor_name_standardization',
+            'standardized_names': standardized_names,
+            'enhanced_companies': enhanced_companies,
+            'enhanced_investors': enhanced_investors,
+            'relationships': relationships
+        })
+        
+        # 处理所有待处理的增强任务
         enhancement_results = await self.optimizer.process_all_pending_enhancements()
+        
+        # 自动保存完整的增强结果
+        await self._auto_save_llm_results({
+            'stage': 'complete_enhancement',
+            'enhancement_results': enhancement_results,
+            'enhanced_companies': enhanced_companies,
+            'enhanced_investors': enhanced_investors,
+            'industry_classifications': industry_classifications,
+            'standardized_names': standardized_names,
+            'relationships': relationships
+        })
 
         logger.info(f"LLM增强优化完成：")
-        logger.info(f"  - 增强实体描述：{len(enhanced_companies)} 公司, {len(enhanced_investors)} 投资方")
-        logger.info(f"  - 行业分类优化：{len(industry_classifications)} 公司")
+        if has_companies:
+            logger.info(f"  - 增强实体描述：{len(enhanced_companies)} 公司, {len(enhanced_investors)} 投资方")
+            logger.info(f"  - 行业分类优化：{len(industry_classifications)} 公司")
+        else:
+            logger.info(f"  - 增强实体描述：{len(enhanced_investors)} 投资方（无公司数据）")
         logger.info(f"  - 投资方名称标准化：{len(standardized_names)} 个名称")
         logger.info(f"  - LLM调用次数：{enhancement_results['processed']} 次")
 
@@ -430,6 +493,111 @@ class Pipeline:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         logger.info(f"中间结果已保存: {output_file}")
+    
+    async def _auto_save_llm_results(self, llm_data: Dict):
+        """自动保存LLM处理结果 - 增强版本"""
+        try:
+            stage = llm_data.get('stage', 'unknown')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 创建自动保存目录
+            auto_save_dir = self.output_dir / "auto_save"
+            auto_save_dir.mkdir(exist_ok=True)
+            
+            # 构建详细的保存数据
+            save_data = {
+                'stage': stage,
+                'timestamp': timestamp,
+                'data': llm_data,
+                'pipeline_stats': self.pipeline_stats.copy(),
+                'build_stats': self.builder.get_build_statistics(),
+                'llm_enhancement_queue': await self._get_llm_queue_safe(),
+                'entity_matcher_stats': self.entity_matcher.get_stats() if hasattr(self, 'entity_matcher') else {}
+            }
+            
+            # 保存LLM处理结果
+            save_file = auto_save_dir / f"llm_{stage}_{timestamp}.json"
+            with open(save_file, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"LLM处理结果自动保存: {save_file}")
+            
+            # 同时保存增量知识图谱数据
+            await self._save_incremental_knowledge_graph(llm_data, stage, timestamp)
+            
+            # 保存处理进度快照
+            await self._save_progress_snapshot(stage, timestamp)
+            
+        except Exception as e:
+            logger.error(f"自动保存LLM结果时出错: {e}")
+    
+    async def _get_llm_queue_safe(self) -> List:
+        """安全获取LLM增强队列"""
+        try:
+            llm_queue = self.builder.get_llm_enhancement_batch()
+            # 如果是协程对象，需要await
+            if asyncio.iscoroutine(llm_queue):
+                llm_queue = await llm_queue
+            return llm_queue if llm_queue else []
+        except Exception as e:
+            logger.error(f"获取LLM队列时出错: {e}")
+            return []
+    
+    async def _save_progress_snapshot(self, stage: str, timestamp: str):
+        """保存处理进度快照"""
+        try:
+            snapshot_dir = self.output_dir / "progress_snapshots"
+            snapshot_dir.mkdir(exist_ok=True)
+            
+            # 构建进度快照
+            snapshot = {
+                'stage': stage,
+                'timestamp': timestamp,
+                'pipeline_stats': self.pipeline_stats.copy(),
+                'build_stats': self.builder.get_build_statistics(),
+                'entity_count': len(self.builder.knowledge_graph.get('companies', {})) + len(self.builder.knowledge_graph.get('investors', {})),
+                'relationship_count': len(self.builder.knowledge_graph.get('relationships', [])),
+                'llm_queue_size': len(await self._get_llm_queue_safe())
+            }
+            
+            # 保存快照
+            snapshot_file = snapshot_dir / f"progress_{stage}_{timestamp}.json"
+            with open(snapshot_file, 'w', encoding='utf-8') as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"进度快照已保存: {snapshot_file}")
+            
+        except Exception as e:
+            logger.error(f"保存进度快照时出错: {e}")
+    
+    async def _save_incremental_knowledge_graph(self, llm_data: Dict, stage: str, timestamp: str):
+        """保存增量知识图谱数据"""
+        try:
+            # 创建增量保存目录
+            incremental_dir = self.output_dir / "incremental_kg"
+            incremental_dir.mkdir(exist_ok=True)
+            
+            # 构建增量知识图谱数据
+            incremental_kg = {
+                'stage': stage,
+                'timestamp': timestamp,
+                'enhanced_companies': llm_data.get('enhanced_companies', {}),
+                'enhanced_investors': llm_data.get('enhanced_investors', {}),
+                'industry_classifications': llm_data.get('industry_classifications', {}),
+                'standardized_names': llm_data.get('standardized_names', {}),
+                'relationships': llm_data.get('relationships', []),
+                'enhancement_results': llm_data.get('enhancement_results', {})
+            }
+            
+            # 保存增量知识图谱
+            kg_file = incremental_dir / f"kg_{stage}_{timestamp}.json"
+            with open(kg_file, 'w', encoding='utf-8') as f:
+                json.dump(incremental_kg, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"增量知识图谱已保存: {kg_file}")
+            
+        except Exception as e:
+            logger.error(f"保存增量知识图谱时出错: {e}")
     
     async def save_final_results(self, kg_data: Dict, quality_report: Dict):
         """保存最终结果"""

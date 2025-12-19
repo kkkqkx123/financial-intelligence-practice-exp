@@ -140,7 +140,7 @@ class KGBuilder:
             'metadata': {
                 'created_at': datetime.now().isoformat(),
                 'data_source': 'test_data',
-                'confidence': 0.8
+                'confidence': 0.6  # 从0.8降低到0.6
             }
         }
         
@@ -201,7 +201,7 @@ class KGBuilder:
             'metadata': {
                 'created_at': datetime.now().isoformat(),
                 'data_source': 'test_data',
-                'confidence': 0.8
+                'confidence': 0.6  # 从0.8降低到0.6
             }
         }
         
@@ -355,6 +355,58 @@ class KGBuilder:
             known_companies = set([comp['name'] for comp in self.knowledge_graph['companies']])
             known_investors = set([inv['name'] for inv in self.knowledge_graph['investors']])
             
+            # 如果没有已知实体，先创建所有实体
+            if not known_companies and not known_investors:
+                logger.warning("没有已知实体，将创建所有实体")
+                # 创建融资方实体
+                investee_entity = {
+                    'name': investee_name,
+                    'type': 'Company',
+                    'properties': {
+                        'short_name': investee_name,
+                        'full_name': investee_name,
+                        'description': event.get('description', ''),
+                        'confidence': 0.7
+                    }
+                }
+                self.knowledge_graph['companies'].append(investee_entity)
+                
+                # 创建投资方实体
+                for investor_name in investor_names:
+                    if not investor_name or not investor_name.strip():
+                        continue
+                    
+                    investor_entity = {
+                        'name': investor_name,
+                        'type': 'Investor',
+                        'properties': {
+                            'short_name': investor_name,
+                            'full_name': investor_name,
+                            'description': '',
+                            'confidence': 0.7
+                        }
+                    }
+                    self.knowledge_graph['investors'].append(investor_entity)
+                    
+                    # 创建投资关系
+                    relationship = {
+                        'source': investor_entity['name'],
+                        'target': investee_entity['name'],
+                        'type': 'INVESTED_IN',
+                        'properties': {
+                            'amount': event.get('amount'),
+                            'round': event.get('round'),
+                            'date': event.get('investment_date'),
+                            'description': event.get('description', ''),
+                            'confidence': 0.7
+                        }
+                    }
+                    
+                    self.knowledge_graph['relationships'].append(relationship)
+                    self.stats['relationships_created'] += 1
+                
+                return
+            
             # 匹配融资方实体
             investee_match = self.matcher.match_company(investee_name, known_companies)
             investee_entity = None
@@ -366,22 +418,19 @@ class KGBuilder:
                         investee_entity = comp
                         break
             else:
-                # 创建新实体并标记需要LLM增强
+                # 创建新实体，但不标记为需要LLM增强
                 investee_entity = {
                     'name': investee_name,
                     'type': 'Company',
                     'properties': {
                         'short_name': investee_name,
                         'full_name': investee_name,
-                        'description': '',
-                        'needs_llm_enhancement': True,
-                        'source_event': event.get('description', ''),
-                        'confidence': 0.5
+                        'description': event.get('description', ''),
+                        'confidence': 0.6
                     }
                 }
                 self.knowledge_graph['companies'].append(investee_entity)
-                self.llm_enhancement_queue.append(('company', investee_name))
-                logger.info(f"创建新公司实体: {investee_name} (需要LLM增强)")
+                logger.info(f"创建新公司实体: {investee_name}")
             
             # 处理每个投资方
             for investor_name in investor_names:
@@ -399,7 +448,7 @@ class KGBuilder:
                             investor_entity = inv
                             break
                 else:
-                    # 创建新实体并标记需要LLM增强
+                    # 创建新实体，但不标记为需要LLM增强
                     investor_entity = {
                         'name': investor_name,
                         'type': 'Investor',
@@ -407,14 +456,11 @@ class KGBuilder:
                             'short_name': investor_name,
                             'full_name': investor_name,
                             'description': '',
-                            'needs_llm_enhancement': True,
-                            'source_event': event.get('description', ''),
-                            'confidence': 0.5
+                            'confidence': 0.6
                         }
                     }
                     self.knowledge_graph['investors'].append(investor_entity)
-                    self.llm_enhancement_queue.append(('investor', investor_name))
-                    logger.info(f"创建新投资方实体: {investor_name} (需要LLM增强)")
+                    logger.info(f"创建新投资方实体: {investor_name}")
                 
                 # 创建投资关系
                 relationship = {
@@ -426,7 +472,7 @@ class KGBuilder:
                         'round': event.get('round'),
                         'date': event.get('investment_date'),
                         'description': event.get('description', ''),
-                        'confidence': 0.8
+                        'confidence': 0.7
                     }
                 }
                 
@@ -436,8 +482,7 @@ class KGBuilder:
         except Exception as e:
             self.stats['failed_events'] += 1
             logger.error(f"创建投资关系失败: {event.get('description', '')[:50]}... 错误: {e}")
-            # 将失败的事件添加到LLM增强队列，以便后续处理
-            self.llm_enhancement_queue.append(('event', str(event)))
+            # 不再将失败的事件添加到LLM增强队列
     
     def _generate_company_aliases(self, company_name: str) -> List[str]:
         """生成公司别名"""

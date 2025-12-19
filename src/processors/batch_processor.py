@@ -964,12 +964,12 @@ class OptimizedBatchProcessor:
             description = company_data.get('description', '')
             
             # 如果已有行业分类且置信度高，直接使用
-            if industry and company_data.get('industry_confidence', 0) > 0.8:
+            if industry and company_data.get('industry_confidence', 0) > 0.6:  # 从0.8降低到0.6
                 industry_classifications[company_id] = {
                     'company_id': company_id,
                     'company_name': name,
                     'industry': industry,
-                    'confidence': company_data.get('industry_confidence', 0.8)
+                    'confidence': company_data.get('industry_confidence', 0.6),  # 从0.8降低到0.6
                 }
                 continue
             
@@ -1004,7 +1004,7 @@ class OptimizedBatchProcessor:
                         'company_id': company_id,
                         'company_name': name,
                         'industry': result['industry'],
-                        'confidence': result.get('confidence', 0.8),
+                        'confidence': result.get('confidence', 0.6),  # 从0.8降低到0.6
                         'reasoning': result.get('reasoning', '')
                     }
                 else:
