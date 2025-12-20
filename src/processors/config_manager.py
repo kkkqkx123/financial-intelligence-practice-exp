@@ -44,6 +44,19 @@ class ConfigManager:
     
     def __post_init__(self):
         """初始化后自动加载配置"""
+        # 尝试多个位置查找.env文件
+        possible_paths = [
+            Path('.env'),                    # 当前目录
+            Path('../.env'),                 # 上级目录
+            Path(__file__).parent.parent / '.env',  # 项目根目录
+            Path(__file__).parent / '.env'   # src目录
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                self.env_file_path = path
+                break
+        
         self.load_configuration()
     
     def load_configuration(self, force_reload: bool = False) -> bool:

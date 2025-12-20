@@ -400,8 +400,22 @@ class E2ETestRunner:
                         'rounds': investor.get('轮次', '')
                     })
             
-            # 添加关系到知识图谱
-            kg_builder.relationships = relations
+            # 添加关系到知识图谱 - 将Relation对象转换为字典格式
+            kg_builder.relationships = []
+            for relation in relations:
+                if hasattr(relation, 'id'):
+                    # 将Relation对象转换为字典
+                    relation_dict = {
+                        'id': relation.id,
+                        'source': relation.source,
+                        'target': relation.target,
+                        'type': relation.type,
+                        'properties': relation.properties if hasattr(relation, 'properties') else {}
+                    }
+                    kg_builder.relationships.append(relation_dict)
+                elif isinstance(relation, dict):
+                    # 已经是字典格式
+                    kg_builder.relationships.append(relation)
             
             end_time = datetime.now()
             
@@ -481,7 +495,23 @@ class E2ETestRunner:
             # 注意：KGBuilder使用不同的数据结构，我们需要适配
             kg_builder.companies = {}  # 初始化公司实体字典
             kg_builder.investors = {}  # 初始化投资方实体字典
-            kg_builder.relationships = relations  # 设置关系列表
+            
+            # 将Relation对象转换为字典格式
+            kg_builder.relationships = []
+            for relation in relations:
+                if hasattr(relation, 'id'):
+                    # 将Relation对象转换为字典
+                    relation_dict = {
+                        'id': relation.id,
+                        'source': relation.source,
+                        'target': relation.target,
+                        'type': relation.type,
+                        'properties': relation.properties if hasattr(relation, 'properties') else {}
+                    }
+                    kg_builder.relationships.append(relation_dict)
+                elif isinstance(relation, dict):
+                    # 已经是字典格式
+                    kg_builder.relationships.append(relation)
             
             # 将提取的实体添加到知识图谱
             for entity in entities:
@@ -510,8 +540,8 @@ class E2ETestRunner:
                     "message": "Neo4j集成成功",
                     "entities_count": len(entities),
                     "relations_count": len(relations),
-                    "neo4j_connected": True,
-                    "neo4j_written": result.get('success', False),
+                    "connection_success": True,
+                    "write_success": result.get('success', False),
                     "duration": (end_time - start_time).total_seconds()
                 }
                 logger.info(f"Neo4j集成测试通过，耗时: {self.test_results['neo4j_integration']['duration']:.2f}秒")
@@ -523,8 +553,8 @@ class E2ETestRunner:
                     "message": "Neo4j不可用",
                     "entities_count": len(entities),
                     "relations_count": len(relations),
-                    "neo4j_connected": False,
-                    "neo4j_written": False,
+                    "connection_success": False,
+                    "write_success": False,
                     "duration": (end_time - start_time).total_seconds()
                 }
                 logger.error("Neo4j不可用")
@@ -535,12 +565,12 @@ class E2ETestRunner:
         except Exception as e:
             end_time = datetime.now()
             self.test_results["neo4j_integration"] = {
-                "success": False,
-                "message": f"Neo4j集成失败: {str(e)}",
-                "neo4j_connected": False,
-                "neo4j_written": False,
-                "duration": (end_time - start_time).total_seconds()
-            }
+                    "success": False,
+                    "message": f"Neo4j集成失败: {str(e)}",
+                    "connection_success": False,
+                    "write_success": False,
+                    "duration": (end_time - start_time).total_seconds()
+                }
             logger.error(f"Neo4j集成测试失败: {e}")
     
     async def test_complete_workflow(self):
@@ -553,7 +583,7 @@ class E2ETestRunner:
             pipeline = Pipeline(data_dir="d:/Source/torch/financial-intellgience/src/dataset")
             
             # 执行完整工作流
-            result = pipeline.run_full_pipeline()
+            result = await pipeline.run_full_pipeline()
             success = result.get('success', False)
             
             end_time = datetime.now()

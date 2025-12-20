@@ -801,7 +801,12 @@ class OptimizedBatchProcessor:
                     result=request_attributes
                 ))
             
-            # 处理所有待处理的增强任务
+            # 处理实体描述优化
+            if companies:
+                entity_results = await self.optimize_entity_descriptions(companies, 'company')
+                results['entity_descriptions']['processed'] = len(companies)
+                results['entity_descriptions']['enhanced'] = len(entity_results)
+        
             try:
                 enhancement_results = await self.process_all_pending_enhancements()
                 self.stats['enhancements_processed'] = enhancement_results
@@ -1150,12 +1155,6 @@ class OptimizedBatchProcessor:
         # 获取待处理的实体
         companies = self.get_companies()
         investors = self.get_investors()
-        
-        # 处理实体描述优化
-        if companies:
-            entity_results = await self.optimize_entity_descriptions(companies)
-            results['entity_descriptions']['processed'] = len(companies)
-            results['entity_descriptions']['enhanced'] = len(entity_results)
         
         # 处理行业分类优化
         if companies:

@@ -113,15 +113,42 @@
 ### 完整流程执行
 
 ```bash
-# 执行完整知识图谱构建流程
-python src/main.py --data-dir src/dataset --neo4j-integration --clear-neo4j
+# 执行完整知识图谱构建流程（启用Neo4j集成）
+python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j
 
-# 指定输出目录
-python src/main.py --data-dir src/dataset --output-dir results --neo4j-integration
+# 指定Neo4j连接参数
+python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j --neo4j-uri bolt://localhost:7687 --neo4j-user neo4j --neo4j-password 1234567kk
 
 # 跳过Neo4j集成（仅生成知识图谱文件）
-python src/main.py --data-dir src/dataset --no-neo4j
+python src/main.py --data-dir src/dataset --output-dir output
+
+# 显示详细日志和配置信息
+python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j --verbose --show-config
+
+# 使用自定义环境配置文件
+python src/main.py --data-dir src/dataset --output-dir output --env-file .env.custom
+
+# 不保存中间结果（仅保存最终结果）
+python src/main.py --data-dir src/dataset --output-dir output --no-intermediate
+
+# 使用run_main.py简化执行（推荐）
+python src/run_main.py
 ```
+
+### 命令行选项说明
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `--data-dir` | 数据文件目录 | `src/dataset` |
+| `--output-dir` | 输出目录 | `output` |
+| `--enable-neo4j` | 启用Neo4j集成 | 不启用 |
+| `--neo4j-uri` | Neo4j URI | `bolt://localhost:7687` |
+| `--neo4j-user` | Neo4j用户名 | `neo4j` |
+| `--neo4j-password` | Neo4j密码 | `password` |
+| `--env-file` | 自定义.env文件路径 | 使用默认.env |
+| `--show-config` | 显示配置信息 | 不显示 |
+| `--no-intermediate` | 不保存中间结果 | 保存中间结果 |
+| `--verbose` | 详细日志输出 | 标准日志输出 |
 
 ### Neo4j配置
 

@@ -91,10 +91,10 @@ class Pipeline:
         # 完全跳过公司数据加载
         data_file_mappings = {
             'investment_events': ['investment_events.csv'],
-            'investors': ['investment_structure.csv'],
             'investment_structures': ['investment_structure.csv']
             # 注释掉公司数据，完全跳过加载
             # 'companies': ['company_data.md']
+            # 投资方数据将从投资事件数据中提取，不需要单独加载
         }
         
         loaded_data: Dict[str, List[Dict]] = {}
@@ -372,7 +372,11 @@ class Pipeline:
         else:
             logger.info(f"  - 增强实体描述：{len(enhanced_investors)} 投资方（无公司数据）")
         logger.info(f"  - 投资方名称标准化：{len(standardized_names)} 个名称")
-        logger.info(f"  - LLM调用次数：{enhancement_results['processed']} 次")
+        # 计算总的处理次数
+        total_processed = (enhancement_results['entity_descriptions']['processed'] + 
+                          enhancement_results['industry_classifications']['processed'] + 
+                          enhancement_results['investor_standardizations']['processed'])
+        logger.info(f"  - LLM调用次数：{total_processed} 次")
 
         # 步骤4：知识图谱验证
         logger.info("步骤4：知识图谱验证...")
@@ -384,9 +388,31 @@ class Pipeline:
         kg_validation = self.validator.validate_knowledge_graph(kg_data)
 
         logger.info(f"知识图谱验证完成：")
-        logger.info(f"  - 实体一致性：{kg_validation['entity_consistency']['valid']}/{kg_validation['entity_consistency']['total']} 有效")
-        logger.info(f"  - 关系完整性：{kg_validation['relationship_completeness']['valid']}/{kg_validation['relationship_completeness']['total']} 有效")
-        logger.info(f"  - 总体得分：{kg_validation['overall_score']:.2f}")
+        # 从验证结果中提取实体一致性信息
+        entity_validation = kg_validation.get('entity_validation', {})
+        relationship_validation = kg_validation.get('relationship_validation', {})
+        consistency_checks = kg_validation.get('consistency_checks', {})
+        
+        # 计算实体一致性统计
+        total_companies = entity_validation.get('total_companies', 0)
+        total_investors = entity_validation.get('total_investors', 0)
+        companies_with_ids = entity_validation.get('companies_with_ids', 0)
+        investors_with_ids = entity_validation.get('investors_with_ids', 0)
+        total_entities = total_companies + total_investors
+        valid_entities = companies_with_ids + investors_with_ids
+        
+        # 计算关系完整性统计
+        total_relationships = relationship_validation.get('total_relationships', 0)
+        valid_relationships = relationship_validation.get('valid_relationships', 0)
+        
+        # 计算总体质量分数
+        entity_score = valid_entities / total_entities if total_entities > 0 else 0
+        relationship_score = valid_relationships / total_relationships if total_relationships > 0 else 0
+        overall_score = (entity_score + relationship_score) / 2 if (total_entities > 0 and total_relationships > 0) else 0
+        
+        logger.info(f"  - 实体一致性：{valid_entities}/{total_entities} 有效")
+        logger.info(f"  - 关系完整性：{valid_relationships}/{total_relationships} 有效")
+        logger.info(f"  - 总体得分：{overall_score:.2f}")
 
         # 更新构建器内部状态
         self.builder.companies = enhanced_companies

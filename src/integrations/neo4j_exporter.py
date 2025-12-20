@@ -397,13 +397,13 @@ class KnowledgeGraphExporter:
                     company_name_map[alt_name] = node
             
             for rel in relationships:
-                # 获取关系数据
-                source = rel.get('source', '')
-                target = rel.get('target', '')
-                rel_type = rel.get('type', '')
+                # 获取关系数据 - 使用字典访问方式
+                source = rel.get('source')
+                target = rel.get('target')
+                rel_type = rel.get('type')
                 
                 if not source or not target or not rel_type:
-                    logger.warning(f"投资关系缺少必要字段: {rel}")
+                    logger.warning(f"投资关系缺少必要字段: source={source}, target={target}, type={rel_type}")
                     continue
                 
                 # 根据关系类型处理不同的关系
@@ -624,20 +624,29 @@ class KnowledgeGraphExporter:
         
         return best_match
     
-    def _create_relationship_properties(self, rel: Dict) -> Dict:
+    def _create_relationship_properties(self, rel) -> Dict:
         """创建关系属性"""
-        rel_properties = {
-            'source_data': rel.get('properties', {}).get('source_data', 'investment_events'),
-            'confidence': rel.get('properties', {}).get('confidence', 0.8),
-            '数据来源': '知识图谱构建系统',
-            '创建时间': datetime.now().isoformat()
-        }
+        # 处理Relation对象或字典
+        if hasattr(rel, 'properties'):
+            properties = rel.properties
+        elif isinstance(rel, dict):
+            properties = rel.get('properties', {})
+        else:
+            properties = {}
         
-        # 添加其他属性
-        properties = rel.get('properties', {})
+        # 确保属性是字典格式
+        if not isinstance(properties, dict):
+            properties = {}
+        
+        # 构建标准化的关系属性
+        rel_properties = {}
         for key, value in properties.items():
-            if key not in ['source_data', 'confidence']:
+            if value is not None:
                 rel_properties[key] = value
+        
+        # 添加默认属性
+        rel_properties['created_at'] = datetime.now().isoformat()
+        rel_properties['data_source'] = 'financial_intelligence'
         
         return rel_properties
     
@@ -788,30 +797,34 @@ class KnowledgeGraphExporter:
     
     def get_export_statistics(self) -> Dict[str, Any]:
         """获取导出统计信息"""
-        if self.graph and self.node_matcher:
-            # 实体统计
-            company_count = len(list(self.node_matcher.match("公司")))
-            investor_count = len(list(self.node_matcher.match("投资方")))
-            industry_count = len(list(self.node_matcher.match("行业")))
-            
-            # 关系统统统
-            rel_query = """
-            MATCH ()-[r]->() 
-            RETURN type(r) as relation_type, count(r) as count
-            ORDER BY count DESC
-            """
-            relationships = self.graph.run(rel_query).data()
-            
-            return {
-                'entity_counts': {
-                    'companies': company_count,
-                    'investors': investor_count,
-                    'industries': industry_count,
-                    'total': company_count + investor_count + industry_count
-                },
-                'relationships': relationships,
-                'connection_status': 'connected'
-            }
+        if self.graph:
+            try:
+                # 实体统计
+                company_count = len(list(self.node_matcher.match("公司")))
+                investor_count = len(list(self.node_matcher.match("投资方")))
+                industry_count = len(list(self.node_matcher.match("行业")))
+                
+                # 关系统统统
+                rel_query = """
+                MATCH ()-[r]->() 
+                RETURN type(r) as relation_type, count(r) as count
+                ORDER BY count DESC
+                """
+                relationships = self.graph.run(rel_query).data()
+                
+                return {
+                    'entity_counts': {
+                        'companies': company_count,
+                        'investors': investor_count,
+                        'industries': industry_count,
+                        'total': company_count + investor_count + industry_count
+                    },
+                    'relationships': relationships,
+                    'connection_status': 'connected'
+                }
+            except Exception as e:
+                logger.error(f"获取统计信息失败: {e}")
+                return {'connection_status': 'error', 'error': str(e)}
         else:
             return {'connection_status': 'not_connected', 'error': 'Graph not available'}
     

@@ -355,56 +355,9 @@ class KGBuilder:
             known_companies = set([comp['name'] for comp in self.knowledge_graph['companies']])
             known_investors = set([inv['name'] for inv in self.knowledge_graph['investors']])
             
-            # 如果没有已知实体，先创建所有实体
+            # 如果没有已知实体，无法创建完整的关系
             if not known_companies and not known_investors:
-                logger.warning("没有已知实体，将创建所有实体")
-                # 创建融资方实体
-                investee_entity = {
-                    'name': investee_name,
-                    'type': 'Company',
-                    'properties': {
-                        'short_name': investee_name,
-                        'full_name': investee_name,
-                        'description': event.get('description', ''),
-                        'confidence': 0.7
-                    }
-                }
-                self.knowledge_graph['companies'].append(investee_entity)
-                
-                # 创建投资方实体
-                for investor_name in investor_names:
-                    if not investor_name or not investor_name.strip():
-                        continue
-                    
-                    investor_entity = {
-                        'name': investor_name,
-                        'type': 'Investor',
-                        'properties': {
-                            'short_name': investor_name,
-                            'full_name': investor_name,
-                            'description': '',
-                            'confidence': 0.7
-                        }
-                    }
-                    self.knowledge_graph['investors'].append(investor_entity)
-                    
-                    # 创建投资关系
-                    relationship = {
-                        'source': investor_entity['name'],
-                        'target': investee_entity['name'],
-                        'type': 'INVESTED_IN',
-                        'properties': {
-                            'amount': event.get('amount'),
-                            'round': event.get('round'),
-                            'date': event.get('investment_date'),
-                            'description': event.get('description', ''),
-                            'confidence': 0.7
-                        }
-                    }
-                    
-                    self.knowledge_graph['relationships'].append(relationship)
-                    self.stats['relationships_created'] += 1
-                
+                logger.warning("没有已知实体，跳过投资关系创建 (需要完整的公司和投资方数据)")
                 return
             
             # 匹配融资方实体
@@ -418,19 +371,9 @@ class KGBuilder:
                         investee_entity = comp
                         break
             else:
-                # 创建新实体，但不标记为需要LLM增强
-                investee_entity = {
-                    'name': investee_name,
-                    'type': 'Company',
-                    'properties': {
-                        'short_name': investee_name,
-                        'full_name': investee_name,
-                        'description': event.get('description', ''),
-                        'confidence': 0.6
-                    }
-                }
-                self.knowledge_graph['companies'].append(investee_entity)
-                logger.info(f"创建新公司实体: {investee_name}")
+                # 不创建不完整的公司实体，只记录日志
+                logger.info(f"跳过不完整公司实体创建: {investee_name} (仅从投资事件提取，缺少基本信息)")
+                return
             
             # 处理每个投资方
             for investor_name in investor_names:
@@ -448,19 +391,9 @@ class KGBuilder:
                             investor_entity = inv
                             break
                 else:
-                    # 创建新实体，但不标记为需要LLM增强
-                    investor_entity = {
-                        'name': investor_name,
-                        'type': 'Investor',
-                        'properties': {
-                            'short_name': investor_name,
-                            'full_name': investor_name,
-                            'description': '',
-                            'confidence': 0.6
-                        }
-                    }
-                    self.knowledge_graph['investors'].append(investor_entity)
-                    logger.info(f"创建新投资方实体: {investor_name}")
+                    # 不创建不完整的投资方实体，只记录日志
+                    logger.info(f"跳过不完整投资方实体创建: {investor_name} (仅从投资事件提取，缺少基本信息)")
+                    continue
                 
                 # 创建投资关系
                 relationship = {

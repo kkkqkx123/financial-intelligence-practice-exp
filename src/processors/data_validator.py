@@ -141,42 +141,44 @@ class DataValidator:
             record_valid = True
             record_errors = []
             
-            # 验证投资方
-            investor = event.get('投资方', '')
+            # 验证投资方 - 支持中文字段名和英文字段名
+            investor = event.get('投资方', event.get('investors', ''))
             # 处理投资方可能是列表的情况
             if isinstance(investor, list):
                 investor_valid = any(inv and len(str(inv).strip()) >= 2 for inv in investor if inv)
                 if not investor_valid:
+                    record_valid = False
                     record_errors.append(f"记录 {idx+1}: 投资方信息无效")
                 field_stats['投资方']['filled' if investor_valid else 'empty'] += 1
             else:
                 if not investor or len(investor.strip()) < 2:
+                    record_valid = False
                     record_errors.append(f"记录 {idx+1}: 投资方信息无效")
                 field_stats['投资方']['filled' if investor else 'empty'] += 1
             
-            # 验证融资方
-            company = event.get('融资方', '')
+            # 验证融资方 - 支持中文字段名和英文字段名
+            company = event.get('融资方', event.get('investee', ''))
             if not company or len(company.strip()) < 2:
                 record_valid = False
                 record_errors.append(f"记录 {idx+1}: 融资方信息无效")
             field_stats['融资方']['filled' if company else 'empty'] += 1
             
-            # 验证融资时间
-            date = event.get('融资时间', '')
+            # 验证融资时间 - 支持中文字段名和英文字段名
+            date = event.get('融资时间', event.get('investment_date', ''))
             if date and not self._is_valid_date(date):
                 record_errors.append(f"记录 {idx+1}: 融资时间格式无效")
             field_stats['融资时间']['filled' if date else 'empty'] += 1
             
-            # 验证轮次
-            round_info = event.get('轮次', '')
+            # 验证轮次 - 支持中文字段名和英文字段名
+            round_info = event.get('轮次', event.get('round', ''))
             if round_info:
                 round_patterns[round_info] += 1
                 if not self._is_valid_round(round_info):
                     record_errors.append(f"记录 {idx+1}: 轮次信息无效")
             field_stats['轮次']['filled' if round_info else 'empty'] += 1
             
-            # 验证金额
-            amount = event.get('金额', '')
+            # 验证金额 - 支持中文字段名和英文字段名
+            amount = event.get('金额', event.get('amount', ''))
             if amount:
                 amount_patterns[amount] += 1
                 if not self._is_valid_amount(amount):

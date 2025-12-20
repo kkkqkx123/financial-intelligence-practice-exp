@@ -11,7 +11,9 @@ src\dataset\investment_events.md
 src\dataset\investment_structure.md
 
 **注意**
-代码必须使用csv文件，而非md演示文件。csv文件都已存在，你可以使用命令确认。但使用工具查看时这些csv文件是不可见的
+代码必须使用csv文件，而非md演示文件。csv文件都已存在，你可以使用终端命令确认。但使用工具查看时这些csv文件是不可见的。
+这是为了减少ide索引的开销，实际文件是存在的
+公司数据集不需要处理，该数据集与主工作流无关
 
 **NEO4J**
 NEO4J位于docker，将7473、7474端口映射到
