@@ -22,8 +22,8 @@ except ImportError:
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 设置日志级别为WARNING，减少INFO级别的日志输出
-logger.setLevel(logging.WARNING)
+# 设置日志级别为ERROR，只输出错误信息
+logger.setLevel(logging.ERROR)
 
 
 class LLMClientInterface(ABC):

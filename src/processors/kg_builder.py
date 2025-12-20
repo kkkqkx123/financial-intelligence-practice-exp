@@ -16,8 +16,8 @@ from .config import ROUND_MAPPING, CONFIDENCE_THRESHOLDS
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 设置日志级别为INFO，显示投资方未披露的信息
-logger.setLevel(logging.INFO)
+# 设置日志级别为ERROR，减少日志输出
+logger.setLevel(logging.ERROR)
 
 
 class KGBuilder:
@@ -283,7 +283,8 @@ class KGBuilder:
         investors = {}
         for investor in investor_data:
             try:
-                investor_name = investor.get('机构名称', '')
+                # 支持中文字段名和英文字段名
+                investor_name = investor.get('机构名称', investor.get('name', ''))
                 if not investor_name:
                     continue
                 
@@ -292,15 +293,18 @@ class KGBuilder:
                 # 解析投资偏好
                 investment_preferences = self._parse_investment_preferences(investor)
                 
+                # 支持中文字段名和英文字段名
+                description = investor.get('介绍', investor.get('description', ''))
+                
                 # 构建投资方实体
                 investor_entity = {
                     'id': investor_id,
                     'name': investor_name,
                     'aliases': self._generate_investor_aliases(investor_name),
-                    'description': investor.get('介绍', ''),
+                    'description': description,
                     'investment_focus': investment_preferences,
-                    'scale': self._parse_scale(investor.get('规模', '')),
-                    'preferred_rounds': self._parse_preferred_rounds(investor.get('轮次', '')),
+                    'scale': self._parse_scale(investor.get('规模', investor.get('scale', ''))),
+                    'preferred_rounds': self._parse_preferred_rounds(investor.get('轮次', investor.get('preferred_rounds', ''))),
                     'metadata': {
                         'created_at': datetime.now().isoformat(),
                         'data_source': 'investment_structure',
@@ -336,16 +340,16 @@ class KGBuilder:
     def _create_investment_relationship(self, event: Dict) -> None:
         """创建单个投资关系 - 增强实体链接错误处理"""
         try:
-            # 获取投资方和融资方名称 - 优先使用英文键名（因为DataParser现在返回英文键名）
-            investor_names = event.get('investors', event.get('投资方', []))
-            investee_name = event.get('investee', event.get('融资方', ''))
+            # 获取投资方和融资方名称 - 使用中文字段名，与investment_events.csv保持一致
+            investor_names = event.get('投资方', [])
+            investee_name = event.get('融资方', '')
             
             # 验证必要字段
             if not investor_names or not investee_name:
                 if not investor_names and not investee_name:
                     logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
                 elif not investor_names:
-                    logger.info(f"投资事件投资方未披露，跳过关系创建: 融资方={investee_name}, 描述={event.get('description', '')[:50]}...")
+                    logger.info(f"投资事件投资方未披露，跳过关系创建: 融资方={investee_name}, 描述={event.get('事件资讯', '')[:50]}...")
                 else:
                     logger.warning(f"投资事件缺少必要字段: 投资方={investor_names}, 融资方={investee_name}")
                 self.stats['failed_events'] += 1
@@ -401,10 +405,10 @@ class KGBuilder:
                     'target': investee_entity['name'],
                     'type': 'INVESTED_IN',
                     'properties': {
-                        'amount': event.get('amount'),
-                        'round': event.get('round'),
-                        'date': event.get('investment_date'),
-                        'description': event.get('description', ''),
+                        'amount': event.get('金额'),
+                        'round': event.get('轮次'),
+                        'date': event.get('融资时间'),
+                        'description': event.get('事件资讯', ''),
                         'confidence': 0.7
                     }
                 }
@@ -414,7 +418,7 @@ class KGBuilder:
                 
         except Exception as e:
             self.stats['failed_events'] += 1
-            logger.error(f"创建投资关系失败: {event.get('description', '')[:50]}... 错误: {e}")
+            logger.error(f"创建投资关系失败: {event.get('事件资讯', '')[:50]}... 错误: {e}")
             # 不再将失败的事件添加到LLM增强队列
     
     def _generate_company_aliases(self, company_name: str) -> List[str]:

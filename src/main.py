@@ -57,8 +57,24 @@ class Pipeline:
     
     def __init__(self, data_dir: str = "dataset", output_dir: str = "output", 
                  enable_neo4j: bool = False, neo4j_config: Optional[Dict[str, Any]] = None):
-        self.data_dir = Path(data_dir)
-        self.output_dir = Path(output_dir)
+        # 使用绝对路径处理数据目录
+        if not os.path.isabs(data_dir):
+            # 如果是相对路径，则基于项目根目录计算绝对路径
+            project_root = Path(__file__).parent.parent
+            self.data_dir = project_root / data_dir
+        else:
+            self.data_dir = Path(data_dir)
+            
+        # 使用绝对路径处理输出目录
+        if not os.path.isabs(output_dir):
+            project_root = Path(__file__).parent.parent
+            self.output_dir = project_root / output_dir
+        else:
+            self.output_dir = Path(output_dir)
+            
+        print(f"数据目录: {self.data_dir}")
+        print(f"输出目录: {self.output_dir}")
+        
         self.parser = DataParser()
         self.builder = KGBuilder()
         self.validator = DataValidator()
@@ -85,53 +101,81 @@ class Pipeline:
     
     def load_data_files(self) -> Dict[str, List[Dict]]:
         """加载数据文件 - 支持CSV和Markdown格式"""
-        logger.info("开始加载数据文件")
+        print("\n" + "="*50)
+        print("开始加载数据文件")
+        print("="*50)
+        
+        # 检查数据目录是否存在
+        if not self.data_dir.exists():
+            print(f"❌ 错误: 数据目录不存在: {self.data_dir}")
+            return {}
+            
+        print(f"✅ 数据目录存在: {self.data_dir}")
+        
+        # 列出数据目录中的所有文件
+        print("数据目录中的文件:")
+        for file in self.data_dir.iterdir():
+            if file.is_file():
+                print(f"  - {file.name}")
+        print()
         
         # 支持多种文件格式，按优先级顺序尝试
         # 完全跳过公司数据加载
         data_file_mappings = {
             'investment_events': ['investment_events.csv'],
-            'investment_structures': ['investment_structure.csv']
+            'investment_structures': ['investment_structure.csv'],
+            'investors': ['investors.json']
             # 注释掉公司数据，完全跳过加载
             # 'companies': ['company_data.md']
-            # 投资方数据将从投资事件数据中提取，不需要单独加载
+            # 投资方数据现在从单独的JSON文件加载
         }
         
         loaded_data: Dict[str, List[Dict]] = {}
         
         for data_type, filename_options in data_file_mappings.items():
+            print(f"正在加载 {data_type} 数据...")
             data_loaded = False
             
             for filename in filename_options:
                 file_path = self.data_dir / filename
+                print(f"  尝试加载: {file_path}")
                 
                 if not file_path.exists():
+                    print(f"  ❌ 文件不存在: {file_path}")
                     continue
                 
                 try:
                     # 根据文件扩展名选择合适的解析方法
                     if filename.endswith('.csv'):
-                        logger.info(f"检测到CSV文件: {filename}")
+                        print(f"  ✅ 检测到CSV文件: {filename}")
                         data = self._parse_csv_file(file_path)
                     elif filename.endswith('.md'):
-                        logger.info(f"检测到Markdown文件: {filename}")
+                        print(f"  ✅ 检测到Markdown文件: {filename}")
                         data = self._parse_md_csv_file(file_path)
+                    elif filename.endswith('.json'):
+                        print(f"  ✅ 检测到JSON文件: {filename}")
+                        data = self._parse_json_file(file_path)
                     else:
-                        logger.warning(f"不支持的文件格式: {filename}")
+                        print(f"  ❌ 不支持的文件格式: {filename}")
                         continue
                     
                     loaded_data[data_type] = data
-                    logger.info(f"加载 {data_type}: {len(data)} 条记录")
+                    print(f"  ✅ 成功加载 {data_type}: {len(data)} 条记录")
                     data_loaded = True
                     break
                     
                 except Exception as e:
-                    logger.error(f"加载数据文件失败 {file_path}: {e}")
+                    print(f"  ❌ 加载数据文件失败 {file_path}: {e}")
                     continue
             
             if not data_loaded:
-                logger.warning(f"无法加载 {data_type} 数据，所有候选文件都不存在或加载失败")
+                print(f"  ❌ 无法加载 {data_type} 数据，所有候选文件都不存在或加载失败")
                 loaded_data[data_type] = []
+        
+        print("\n数据加载总结:")
+        for data_type, data in loaded_data.items():
+            print(f"  {data_type}: {len(data)} 条记录")
+        print("="*50 + "\n")
         
         return loaded_data
     
@@ -217,6 +261,26 @@ class Pipeline:
         
         return csv_lines
     
+    def _parse_json_file(self, file_path: Path) -> List[Dict]:
+        """解析JSON文件"""
+        try:
+            logger.info(f"开始解析JSON文件: {file_path}")
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # 确保返回的是列表
+            if isinstance(data, dict):
+                data = [data]
+            
+            logger.info(f"JSON文件 {file_path.name} 解析完成: {len(data)} 条记录")
+            return data
+            
+        except Exception as e:
+            logger.error(f"JSON文件解析失败 {file_path}: {e}")
+            logger.error(f"错误详情: {type(e).__name__}: {str(e)}")
+            return []
+    
     def run_data_parsing_stage(self, raw_data: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
         """运行数据解析阶段"""
         logger.info("开始数据解析阶段")
@@ -236,8 +300,9 @@ class Pipeline:
         
         # 解析投资方数据
         if 'investors' in raw_data:
-            parsed_data['investors'] = self.parser.parse_investment_institutions(raw_data['investors'])
-            logger.info(f"投资方数据解析完成: {len(parsed_data['investors'])} 条")
+            # 投资方数据已经是JSON格式，不需要再进行解析
+            parsed_data['investors'] = raw_data['investors']
+            logger.info(f"投资方数据加载完成: {len(parsed_data['investors'])} 条")
         
         # 解析投资结构数据
         if 'investment_structures' in raw_data:
@@ -254,11 +319,13 @@ class Pipeline:
     
     async def run_entity_building_stage(self, parsed_data: Dict[str, List[Dict]]) -> Dict:
         """运行实体构建阶段"""
-        logger.info("开始实体构建阶段")
+        print("\n" + "="*50)
+        print("开始实体构建阶段")
+        print("="*50)
         stage_start = datetime.now()
 
         # 步骤1：数据验证
-        logger.info("步骤1：数据验证...")
+        print("\n步骤1：数据验证...")
         companies_raw = parsed_data.get('companies', [])
         investment_events_raw = parsed_data.get('investment_events', [])
         investors_raw = parsed_data.get('investors', [])
@@ -269,48 +336,57 @@ class Pipeline:
         
         if has_companies:
             company_validation = self.validator.validate_company_data(companies_raw)
-            logger.info(f"公司数据验证：{company_validation['valid_records']}/{company_validation['total_records']} 有效")
+            print(f"  公司数据验证：{company_validation['valid_records']}/{company_validation['total_records']} 有效")
         else:
             company_validation = {'valid_records': 0, 'total_records': 0, 'valid': True}
-            logger.info("跳过公司数据验证（无公司数据）")
+            print("  跳过公司数据验证（无公司数据）")
 
         event_validation = self.validator.validate_investment_event_data(investment_events_raw)
-        logger.info(f"投资事件验证：{event_validation['valid_records']}/{event_validation['total_records']} 有效")
+        print(f"  投资事件验证：{event_validation['valid_records']}/{event_validation['total_records']} 有效")
 
         investor_validation = self.validator.validate_investor_data(investors_raw)
-        logger.info(f"投资方数据验证：{investor_validation['valid_records']}/{investor_validation['total_records']} 有效")
+        print(f"  投资方数据验证：{investor_validation['valid_records']}/{investor_validation['total_records']} 有效")
         
         structure_validation = self.validator.validate_investment_structure_data(investment_structures_raw)
-        logger.info(f"投资结构数据验证：{structure_validation['valid_records']}/{structure_validation['total_records']} 有效")
+        print(f"  投资结构数据验证：{structure_validation['valid_records']}/{structure_validation['total_records']} 有效")
 
         # 步骤2：构建实体
-        logger.info("步骤2：构建实体...")
+        print("\n步骤2：构建实体...")
         companies = self.builder.build_company_entities(companies_raw) if has_companies else {}
+        print(f"  公司实体构建完成: {len(companies)} 个")
+        
         investors = self.builder.build_investor_entities(investors_raw)
+        print(f"  投资方实体构建完成: {len(investors)} 个")
         
         # 对投资事件数据进行解析和字段映射
-        logger.info("解析投资事件数据...")
+        print("  解析投资事件数据...")
         investment_events = self.parser.parse_investment_events(investment_events_raw)
         
         # 构建投资关系
+        print("  构建投资关系...")
         self.builder.build_investment_relationships(investment_events)
         relationships = self.builder.knowledge_graph['relationships']
+        print(f"  投资关系构建完成: {len(relationships)} 个")
         
         # 构建投资结构关系
         if investment_structures_raw:
+            print("  构建投资结构关系...")
             self.builder.build_investment_structure_relationships(investment_structures_raw)
             # 合并投资结构关系到现有关系
             structure_relationships = self.builder.knowledge_graph.get('structure_relationships', [])
             relationships.extend(structure_relationships)
+            print(f"  投资结构关系构建完成: {len(structure_relationships)} 个")
 
         # 步骤3：LLM增强优化
-        logger.info("步骤3：LLM增强优化...")
+        print("\n步骤3：LLM增强优化...")
         # 设置知识图谱到optimizer
         self.optimizer.set_knowledge_graph(self.builder.knowledge_graph)
         
         # 实体描述优化 - 完成后自动保存
+        print("  进行实体描述优化...")
         enhanced_companies = await self.optimizer.optimize_entity_descriptions(companies, 'company') if has_companies else {}
         enhanced_investors = await self.optimizer.optimize_entity_descriptions(investors, 'investor')
+        print(f"  实体描述优化完成: {len(enhanced_companies)} 公司, {len(enhanced_investors)} 投资方")
         
         # 自动保存实体描述优化结果
         await self._auto_save_llm_results({
@@ -325,7 +401,9 @@ class Pipeline:
         # 行业分类优化 - 完成后自动保存（仅在存在公司数据时执行）
         industry_classifications = {}
         if has_companies and enhanced_companies:
+            print("  进行行业分类优化...")
             industry_classifications = await self.optimizer.optimize_industry_classification(enhanced_companies)
+            print(f"  行业分类优化完成: {len(industry_classifications)} 公司")
             
             # 自动保存行业分类结果
             await self._auto_save_llm_results({
@@ -336,11 +414,13 @@ class Pipeline:
                 'relationships': relationships
             })
         else:
-            logger.info("跳过行业分类优化（无公司数据）")
+            print("  跳过行业分类优化（无公司数据）")
         
         # 投资方名称标准化 - 完成后自动保存
+        print("  进行投资方名称标准化...")
         investor_names = {i.get('name', '') for i in investors_raw if i.get('name')}
         standardized_names = await self.optimizer.optimize_investor_name_standardization(investor_names)
+        print(f"  投资方名称标准化完成: {len(standardized_names)} 个名称")
         
         # 自动保存投资方名称标准化结果
         await self._auto_save_llm_results({
@@ -352,6 +432,7 @@ class Pipeline:
         })
         
         # 处理所有待处理的增强任务
+        print("  处理所有待处理的增强任务...")
         enhancement_results = await self.optimizer.process_all_pending_enhancements()
         
         # 自动保存完整的增强结果
@@ -365,54 +446,21 @@ class Pipeline:
             'relationships': relationships
         })
 
-        logger.info(f"LLM增强优化完成：")
-        if has_companies:
-            logger.info(f"  - 增强实体描述：{len(enhanced_companies)} 公司, {len(enhanced_investors)} 投资方")
-            logger.info(f"  - 行业分类优化：{len(industry_classifications)} 公司")
-        else:
-            logger.info(f"  - 增强实体描述：{len(enhanced_investors)} 投资方（无公司数据）")
-        logger.info(f"  - 投资方名称标准化：{len(standardized_names)} 个名称")
         # 计算总的处理次数
         total_processed = (enhancement_results['entity_descriptions']['processed'] + 
                           enhancement_results['industry_classifications']['processed'] + 
                           enhancement_results['investor_standardizations']['processed'])
-        logger.info(f"  - LLM调用次数：{total_processed} 次")
+        print(f"  LLM调用次数：{total_processed} 次")
 
         # 步骤4：知识图谱验证
-        logger.info("步骤4：知识图谱验证...")
+        print("\n步骤4：知识图谱验证...")
         kg_data = {
             'companies': enhanced_companies,
             'investors': enhanced_investors,
             'relationships': relationships
         }
         kg_validation = self.validator.validate_knowledge_graph(kg_data)
-
-        logger.info(f"知识图谱验证完成：")
-        # 从验证结果中提取实体一致性信息
-        entity_validation = kg_validation.get('entity_validation', {})
-        relationship_validation = kg_validation.get('relationship_validation', {})
-        consistency_checks = kg_validation.get('consistency_checks', {})
-        
-        # 计算实体一致性统计
-        total_companies = entity_validation.get('total_companies', 0)
-        total_investors = entity_validation.get('total_investors', 0)
-        companies_with_ids = entity_validation.get('companies_with_ids', 0)
-        investors_with_ids = entity_validation.get('investors_with_ids', 0)
-        total_entities = total_companies + total_investors
-        valid_entities = companies_with_ids + investors_with_ids
-        
-        # 计算关系完整性统计
-        total_relationships = relationship_validation.get('total_relationships', 0)
-        valid_relationships = relationship_validation.get('valid_relationships', 0)
-        
-        # 计算总体质量分数
-        entity_score = valid_entities / total_entities if total_entities > 0 else 0
-        relationship_score = valid_relationships / total_relationships if total_relationships > 0 else 0
-        overall_score = (entity_score + relationship_score) / 2 if (total_entities > 0 and total_relationships > 0) else 0
-        
-        logger.info(f"  - 实体一致性：{valid_entities}/{total_entities} 有效")
-        logger.info(f"  - 关系完整性：{valid_relationships}/{total_relationships} 有效")
-        logger.info(f"  - 总体得分：{overall_score:.2f}")
+        print(f"  知识图谱验证完成")
 
         # 更新构建器内部状态
         self.builder.companies = enhanced_companies
@@ -426,6 +474,10 @@ class Pipeline:
             'investors_created': len(enhanced_investors),
             'relationships_created': len(relationships)
         }
+
+        print("\n" + "="*50)
+        print("实体构建阶段完成")
+        print("="*50)
 
         return {
             'companies': enhanced_companies,
@@ -803,7 +855,7 @@ class Pipeline:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='金融知识图谱构建工具')
-    parser.add_argument('--data-dir', type=str, default='src/dataset', help='数据文件目录')
+    parser.add_argument('--data-dir', type=str, default='D:/Source/torch/financial-intellgience/src/dataset', help='数据文件目录')
     parser.add_argument('--output-dir', type=str, default='output', help='输出目录')
     parser.add_argument('--enable-neo4j', action='store_true', help='启用Neo4j集成')
     parser.add_argument('--neo4j-uri', type=str, help='Neo4j URI')

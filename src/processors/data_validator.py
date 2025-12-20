@@ -15,8 +15,8 @@ from .config import CONFIDENCE_THRESHOLDS, VALIDATION_RULES
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 设置日志级别为WARNING，减少INFO级别的日志输出
-logger.setLevel(logging.WARNING)
+# 设置日志级别为ERROR，减少日志输出
+logger.setLevel(logging.ERROR)
 
 
 class DataValidator:
@@ -141,7 +141,7 @@ class DataValidator:
             record_valid = True
             record_errors = []
             
-            # 验证投资方 - 支持中文字段名和英文字段名
+            # 验证投资方 - 支持中文字段名和英文字段名（必填字段）
             investor = event.get('投资方', event.get('investors', ''))
             # 处理投资方可能是列表的情况
             if isinstance(investor, list):
@@ -151,25 +151,31 @@ class DataValidator:
                     record_errors.append(f"记录 {idx+1}: 投资方信息无效")
                 field_stats['投资方']['filled' if investor_valid else 'empty'] += 1
             else:
-                if not investor or len(investor.strip()) < 2:
+                # 检查投资方是否为"无"或"未披露"等特殊值
+                if investor and investor.strip() in ['无', '未披露', '未知']:
+                    # 这些特殊值视为有效
+                    field_stats['投资方']['filled'] += 1
+                elif not investor or len(investor.strip()) < 2:
                     record_valid = False
                     record_errors.append(f"记录 {idx+1}: 投资方信息无效")
-                field_stats['投资方']['filled' if investor else 'empty'] += 1
+                    field_stats['投资方']['empty'] += 1
+                else:
+                    field_stats['投资方']['filled'] += 1
             
-            # 验证融资方 - 支持中文字段名和英文字段名
+            # 验证融资方 - 支持中文字段名和英文字段名（必填字段）
             company = event.get('融资方', event.get('investee', ''))
             if not company or len(company.strip()) < 2:
                 record_valid = False
                 record_errors.append(f"记录 {idx+1}: 融资方信息无效")
             field_stats['融资方']['filled' if company else 'empty'] += 1
             
-            # 验证融资时间 - 支持中文字段名和英文字段名
+            # 验证融资时间 - 支持中文字段名和英文字段名（可选字段）
             date = event.get('融资时间', event.get('investment_date', ''))
             if date and not self._is_valid_date(date):
                 record_errors.append(f"记录 {idx+1}: 融资时间格式无效")
             field_stats['融资时间']['filled' if date else 'empty'] += 1
             
-            # 验证轮次 - 支持中文字段名和英文字段名
+            # 验证轮次 - 支持中文字段名和英文字段名（可选字段）
             round_info = event.get('轮次', event.get('round', ''))
             if round_info:
                 round_patterns[round_info] += 1
@@ -177,7 +183,7 @@ class DataValidator:
                     record_errors.append(f"记录 {idx+1}: 轮次信息无效")
             field_stats['轮次']['filled' if round_info else 'empty'] += 1
             
-            # 验证金额 - 支持中文字段名和英文字段名
+            # 验证金额 - 支持中文字段名和英文字段名（可选字段）
             amount = event.get('金额', event.get('amount', ''))
             if amount:
                 amount_patterns[amount] += 1
@@ -220,31 +226,31 @@ class DataValidator:
             record_valid = True
             record_errors = []
             
-            # 验证机构名称
-            name = investor.get('机构名称', '')
+            # 验证机构名称 - 支持中文字段名和英文字段名
+            name = investor.get('机构名称', investor.get('name', ''))
             if not name or len(name.strip()) < 2:
                 record_valid = False
                 record_errors.append(f"记录 {idx+1}: 机构名称无效")
             field_stats['机构名称']['filled' if name else 'empty'] += 1
             
-            # 验证介绍
-            description = investor.get('介绍', '')
+            # 验证介绍 - 支持中文字段名和英文字段名
+            description = investor.get('介绍', investor.get('description', ''))
             if description and len(description.strip()) < 10:
                 record_errors.append(f"记录 {idx+1}: 介绍信息过短")
             field_stats['介绍']['filled' if description else 'empty'] += 1
             
-            # 验证行业
-            industry = investor.get('行业', '')
+            # 验证行业 - 支持中文字段名和英文字段名
+            industry = investor.get('行业', investor.get('industries', ''))
             field_stats['行业']['filled' if industry else 'empty'] += 1
             
-            # 验证规模
-            scale = investor.get('规模', '')
+            # 验证规模 - 支持中文字段名和英文字段名
+            scale = investor.get('规模', investor.get('scale', ''))
             if scale and not self._is_valid_scale(scale):
                 record_errors.append(f"记录 {idx+1}: 规模信息无效")
             field_stats['规模']['filled' if scale else 'empty'] += 1
             
-            # 验证轮次
-            rounds = investor.get('轮次', '')
+            # 验证轮次 - 支持中文字段名和英文字段名
+            rounds = investor.get('轮次', investor.get('preferred_rounds', ''))
             field_stats['轮次']['filled' if rounds else 'empty'] += 1
             
             # 更新统计
@@ -560,32 +566,47 @@ class DataValidator:
         # 5. 简单数字+万：100万（无货币单位）
         
         # 精确金额模式：数字+单位+货币
-        exact_pattern = r'^\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元)$'
+        exact_pattern = r'^\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(exact_pattern, amount):
             return True
         
         # 简单数字+万模式：100万（无货币单位）
-        simple_pattern = r'^\d{1,3}万$'
+        simple_pattern = r'^\d{1,4}万$'
         if re.match(simple_pattern, amount):
             return True
         
+        # 简单数字+亿模式：100亿（无货币单位）
+        simple_yi_pattern = r'^\d+(\.\d+)?亿$'
+        if re.match(simple_yi_pattern, amount):
+            return True
+        
         # 相对金额模式：过/近+单位
-        relative_pattern = r'^(过|近)\s*(千万|亿)\s*(人民币|美元)?$'
+        relative_pattern = r'^(过|近)\s*(千万|亿|百万|十亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(relative_pattern, amount):
             return True
         
         # 模糊金额模式：数+单位
-        fuzzy_pattern = r'^数(千|万|千万|亿)\s*(人民币|美元)?$'
+        fuzzy_pattern = r'^数(千|万|千万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(fuzzy_pattern, amount):
             return True
         
+        # 模糊金额模式：数百+单位
+        hundreds_pattern = r'^数百(万|千万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
+        if re.match(hundreds_pattern, amount):
+            return True
+        
+        # 模糊金额模式：数十+单位
+        tens_pattern = r'^数十(万|千万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
+        if re.match(tens_pattern, amount):
+            return True
+        
         # 带模糊词的金额模式：约/大概/左右+单位
-        fuzzy_word_pattern = r'^(约|大概|左右)\s*(千万|亿)\s*(人民币|美元)?$'
+        fuzzy_word_pattern = r'^(约|大概|左右)\s*(千万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(fuzzy_word_pattern, amount):
             return True
         
         # 带模糊词的精确金额模式：约/大概/左右+数字+单位+货币
-        fuzzy_exact_pattern = r'^(约|大概|左右)\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元)$'
+        fuzzy_exact_pattern = r'^(约|大概|左右)\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)$'
         if re.match(fuzzy_exact_pattern, amount):
             return True
         
@@ -595,36 +616,36 @@ class DataValidator:
             return True
         
         # 金额范围模式：XX-XX万/亿
-        range_pattern = r'^\d+(\.\d+)?\s*-\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元)?$'
+        range_pattern = r'^\d+(\.\d+)?\s*-\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(range_pattern, amount):
             return True
         
         # 金额区间模式：XX至XX万/亿
-        interval_pattern = r'^\d+(\.\d+)?\s*至\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元)?$'
+        interval_pattern = r'^\d+(\.\d+)?\s*至\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(interval_pattern, amount):
             return True
         
         # 金额区间模式：XX~XX万/亿
-        tilde_pattern = r'^\d+(\.\d+)?\s*~\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元)?$'
+        tilde_pattern = r'^\d+(\.\d+)?\s*~\s*\d+(\.\d+)?\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(tilde_pattern, amount):
             return True
         
         # 金额区间模式：XX多/左右万/亿
-        approx_pattern = r'^\d+(\.\d+)?\s*(多|左右)\s*(万|亿)\s*(人民币|美元)?$'
+        approx_pattern = r'^\d+(\.\d+)?\s*(多|左右)\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(approx_pattern, amount):
             return True
         
         # 金额区间模式：XX余万/亿
-        surplus_pattern = r'^\d+(\.\d+)?\s*余\s*(万|亿)\s*(人民币|美元)?$'
+        surplus_pattern = r'^\d+(\.\d+)?\s*余\s*(万|亿)\s*(人民币|美元|英镑|港币|欧元)?$'
         if re.match(surplus_pattern, amount):
             return True
         
         # 其他特殊表达方式
         special_patterns = [
-            r'^千万级\s*(人民币|美元)?$',  # 千万级
-            r'^亿级\s*(人民币|美元)?$',    # 亿级
-            r'^数千万级\s*(人民币|美元)?$', # 数千万级
-            r'^数亿级\s*(人民币|美元)?$',   # 数亿级
+            r'^千万级\s*(人民币|美元|英镑|港币|欧元)?$',  # 千万级
+            r'^亿级\s*(人民币|美元|英镑|港币|欧元)?$',    # 亿级
+            r'^数千万级\s*(人民币|美元|英镑|港币|欧元)?$', # 数千万级
+            r'^数亿级\s*(人民币|美元|英镑|港币|欧元)?$',   # 数亿级
         ]
         
         for pattern in special_patterns:
@@ -650,12 +671,30 @@ class DataValidator:
         # 6. 并购轮次：并购、收购、M&A等
         # 7. 其他轮次：股权融资、定向增发等
         
+        # 去除前后空格
+        round_str = round_str.strip()
+        
         # 基础轮次模式
         basic_rounds = [
             '种子轮', '天使轮', 'Pre-A', 'Pre-B', 'A轮', 'B轮', 'C轮', 
-            'D轮', 'E轮', 'F轮', 'G轮', 'IPO', '上市'
+            'D轮', 'E轮', 'F轮', 'G轮', 'IPO', '上市', '未融资', '未知', '股权转让', '借壳上市', '停止运营', '私有化'
         ]
         if round_str in basic_rounds:
+            return True
+        
+        # 扩展轮次模式：A+轮、B+轮等
+        plus_round_pattern = r'^[A-Z]\+轮$'
+        if re.match(plus_round_pattern, round_str):
+            return True
+        
+        # Pre轮次扩展模式：Pre-A轮、Pre-B轮等
+        pre_round_pattern = r'^Pre-[A-Z]轮$'
+        if re.match(pre_round_pattern, round_str):
+            return True
+        
+        # IPO上市模式
+        ipo_pattern = r'^IPO上市$'
+        if re.match(ipo_pattern, round_str):
             return True
         
         # 扩展轮次模式：A+、B+、C+等
@@ -744,6 +783,47 @@ class DataValidator:
         # 轮次英文数字模式：Series 1、Series 2等
         english_number_pattern = r'^Series [1-9]\d*$'
         if re.match(english_number_pattern, round_str):
+            return True
+        
+        # 添加更多轮次模式以支持更多数据
+        # A轮系列扩展：A1轮、A2轮等
+        a_series_pattern = r'^A\d+轮$'
+        if re.match(a_series_pattern, round_str):
+            return True
+        
+        # B轮系列扩展：B1轮、B2轮等
+        b_series_pattern = r'^B\d+轮$'
+        if re.match(b_series_pattern, round_str):
+            return True
+        
+        # C轮系列扩展：C1轮、C2轮等
+        c_series_pattern = r'^C\d+轮$'
+        if re.match(c_series_pattern, round_str):
+            return True
+        
+        # 其他字母轮次扩展：D1轮、D2轮等
+        letter_series_pattern = r'^[D-Z]\d+轮$'
+        if re.match(letter_series_pattern, round_str):
+            return True
+        
+        # 天使轮系列扩展：天使1轮、天使2轮等
+        angel_series_pattern = r'^天使\d+轮$'
+        if re.match(angel_series_pattern, round_str):
+            return True
+        
+        # 种子轮系列扩展：种子1轮、种子2轮等
+        seed_series_pattern = r'^种子\d+轮$'
+        if re.match(seed_series_pattern, round_str):
+            return True
+        
+        # 上市前系列扩展：上市前1轮、上市前2轮等
+        pre_ipo_pattern = r'^上市前\d+轮$'
+        if re.match(pre_ipo_pattern, round_str):
+            return True
+        
+        # 战略轮次系列扩展：战略1轮、战略2轮等
+        strategic_series_pattern = r'^战略\d+轮$'
+        if re.match(strategic_series_pattern, round_str):
             return True
         
         return False

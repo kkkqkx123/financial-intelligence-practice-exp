@@ -39,6 +39,9 @@ from src.processors.batch_processor import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 设置日志级别为ERROR，减少日志输出
+logger.setLevel(logging.ERROR)
+
 
 class TestSuite:
     """测试套件"""

@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# 设置日志级别为ERROR，减少日志输出
+logger.setLevel(logging.ERROR)
+
 
 @dataclass
 class LLMProviderConfig:

@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 

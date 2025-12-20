@@ -13,6 +13,9 @@ from .config import ROUND_MAPPING, CONFIDENCE_THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
+# 设置日志级别为ERROR，减少日志输出
+logger.setLevel(logging.ERROR)
+
 
 class EntityMatcher:
     """实体链接和匹配系统"""
