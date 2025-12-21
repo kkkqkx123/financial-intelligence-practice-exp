@@ -20,3 +20,7 @@ NEO4J位于docker，将7473、7474端口映射到
 数据库名称为neo4j
 用户名为neo4j
 密码为1234567kk
+注意：python与neo4j的集成永远使用py2neo库，noe4j库根本不存在
+
+**分析建议**
+建议使用python执行neo4j查询，将结果重定向到src\analysis_results目录，再使用py脚本进行二次分析，以完成统计等高级操作
