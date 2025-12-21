@@ -36,7 +36,15 @@ from src.processors.batch_processor import (
 )
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+log_file = "D:/Source/torch/financial-intellgience/src/logs/test_processors.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # 设置日志级别为ERROR，减少日志输出

@@ -18,6 +18,11 @@ import hashlib
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
+# 完全禁用httpx和httpcore的日志记录，避免污染过程记录
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
+logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+
+
 
 @dataclass
 class Entity:
@@ -634,8 +639,33 @@ class SimplifiedLLMProcessor:
                 type="investor"
             )
             entities.append(entity)
-        
+   # 更新统计
         self.stats["successful_requests"] += len(batch)
+        self.stats["entities_extracted"] += len(entities)
+        
+        # 每10个批次输出一次完整处理结果，检查数据质量
+        if hasattr(self, '_batch_count'):
+            self._batch_count += 1
+        else:
+            self._batch_count = 1
+            
+        if self._batch_count % 10 == 0:
+            logger.info(f"LLM实体提取进度: 已处理 {self._batch_count} 个批次")
+            logger.info(f"提取统计: 实体={self.stats['entities_extracted']}, 关系={self.stats['relations_extracted']}, API调用={self.stats['api_calls']}")
+            if self.stats['total_requests'] > 0:
+                logger.info(f"成功率: {self.stats['successful_requests']}/{self.stats['total_requests']} ({self.stats['successful_requests']/self.stats['total_requests']*100:.1f}%)")
+            else:
+                logger.info("成功率: 暂无请求数据")
+            
+            # 输出当前请求的结果
+            logger.info(f"当前批次文本: {combined_text[:200]}...")
+            logger.info(f"当前LLM响应: {response[:500]}...")
+            logger.info(f"当前解析结果: {result}")
+            
+            # 检查是否为空结果
+            if not result.get("companies") and not result.get("investors"):
+                logger.warning("警告: LLM返回空实体结果")
+        
         return entities
     
     async def _process_relation_batch(self, batch: List[ExtractionRequest]) -> List[Relation]:
@@ -675,6 +705,31 @@ class SimplifiedLLMProcessor:
                 relations.append(relation)
         
         self.stats["successful_requests"] += len(batch)
+        self.stats["relations_extracted"] += len(relations)
+        
+        # 每10个批次输出一次完整处理结果，检查数据质量
+        if hasattr(self, '_batch_count'):
+            self._batch_count += 1
+        else:
+            self._batch_count = 1
+            
+        if self._batch_count % 10 == 0:
+            logger.info(f"LLM关系提取进度: 已处理 {self._batch_count} 个批次")
+            logger.info(f"提取统计: 实体={self.stats['entities_extracted']}, 关系={self.stats['relations_extracted']}, API调用={self.stats['api_calls']}")
+            if self.stats['total_requests'] > 0:
+                logger.info(f"成功率: {self.stats['successful_requests']}/{self.stats['total_requests']} ({self.stats['successful_requests']/self.stats['total_requests']*100:.1f}%)")
+            else:
+                logger.info("成功率: 暂无请求数据")
+            
+            # 输出当前请求的结果
+            logger.info(f"当前批次文本: {combined_text[:200]}...")
+            logger.info(f"当前LLM响应: {response[:500]}...")
+            logger.info(f"当前解析结果: {result}")
+            
+            # 检查是否为空结果
+            if not result.get("relations"):
+                logger.warning("警告: LLM返回空关系结果")
+        
         return relations
     
     async def _process_attribute_batch(self, batch: List[ExtractionRequest]) -> List[Dict[str, Any]]:
@@ -710,6 +765,30 @@ class SimplifiedLLMProcessor:
             attributes.append(attr)
         
         self.stats["successful_requests"] += len(batch)
+        
+        # 每10个批次输出一次完整处理结果，检查数据质量
+        if hasattr(self, '_batch_count'):
+            self._batch_count += 1
+        else:
+            self._batch_count = 1
+            
+        if self._batch_count % 10 == 0:
+            logger.info(f"LLM属性提取进度: 已处理 {self._batch_count} 个批次")
+            logger.info(f"提取统计: 实体={self.stats['entities_extracted']}, 关系={self.stats['relations_extracted']}, API调用={self.stats['api_calls']}")
+            if self.stats['total_requests'] > 0:
+                logger.info(f"成功率: {self.stats['successful_requests']}/{self.stats['total_requests']} ({self.stats['successful_requests']/self.stats['total_requests']*100:.1f}%)")
+            else:
+                logger.info("成功率: 暂无请求数据")
+            
+            # 输出当前请求的结果
+            logger.info(f"当前批次文本: {combined_text[:200]}...")
+            logger.info(f"当前LLM响应: {response[:500]}...")
+            logger.info(f"当前解析结果: {result}")
+            
+            # 检查是否为空结果
+            if not result.get("amount") and not result.get("round") and not result.get("date"):
+                logger.warning("警告: LLM返回空属性结果")
+        
         return attributes
     
     def _deduplicate_entities(self, entities: List[Entity]) -> List[Entity]:

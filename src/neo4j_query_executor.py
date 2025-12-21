@@ -20,10 +20,15 @@ except ImportError:
 from integrations.neo4j_exporter import Config
 
 # 配置日志
+log_file = 'D:/Source/torch/financial-intellgience/src/logs/neo4j_query_executor.log'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 

@@ -8,9 +8,14 @@ import json
 import asyncio
 import httpx
 import os
+import logging
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 import time
+
+# 完全禁用httpx和httpcore的日志记录，避免污染过程记录
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
+logging.getLogger("httpcore").setLevel(logging.CRITICAL)
 
 async def call_llm(prompt: str) -> Dict:
     """调用LLM API的函数"""

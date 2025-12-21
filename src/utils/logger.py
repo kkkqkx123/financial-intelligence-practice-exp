@@ -112,7 +112,7 @@ def get_logger(name: str) -> logging.Logger:
 default_logger = setup_logger(
     name='financial_kg',
     level=os.getenv('LOG_LEVEL', 'INFO'),
-    log_file=os.getenv('LOG_FILE', 'logs/financial_kg.log'),
+    log_file=os.getenv('LOG_FILE', 'D:/Source/torch/financial-intellgience/src/logs/financial_kg.log'),
     console_output=True,
     file_output=True
 )

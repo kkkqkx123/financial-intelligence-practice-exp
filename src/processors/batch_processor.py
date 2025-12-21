@@ -801,23 +801,6 @@ class OptimizedBatchProcessor:
                     result=request_attributes
                 ))
             
-            # 处理实体描述优化
-            if companies:
-                entity_results = await self.optimize_entity_descriptions(companies, 'company')
-                results['entity_descriptions']['processed'] = len(companies)
-                results['entity_descriptions']['enhanced'] = len(entity_results)
-        
-            try:
-                enhancement_results = await self.process_all_pending_enhancements()
-                self.stats['enhancements_processed'] = enhancement_results
-            except Exception as e:
-                logger.error(f"处理增强任务时出错: {str(e)}")
-                self.stats['enhancements_processed'] = {
-                    'entity_descriptions': {'processed': 0, 'enhanced': 0},
-                    'industry_classifications': {'processed': 0, 'enhanced': 0},
-                    'investor_standardizations': {'processed': 0, 'enhanced': 0}
-                }
-            
             return results
         except Exception as e:
             # 创建失败结果

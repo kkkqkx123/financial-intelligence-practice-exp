@@ -42,7 +42,7 @@ from utils.logger import setup_logger, get_logger
 setup_logger(
     name='financial_kg',
     level='INFO',
-    log_file='output/pipeline.log',
+    log_file='D:/Source/torch/financial-intellgience/src/logs/pipeline.log',
     console_output=True,
     file_output=True
 )
@@ -55,22 +55,10 @@ logger.setLevel(logging.WARNING)
 class Pipeline:
     """构建流水线"""
     
-    def __init__(self, data_dir: str = "dataset", output_dir: str = "output", 
-                 enable_neo4j: bool = False, neo4j_config: Optional[Dict[str, Any]] = None):
-        # 使用绝对路径处理数据目录
-        if not os.path.isabs(data_dir):
-            # 如果是相对路径，则基于项目根目录计算绝对路径
-            project_root = Path(__file__).parent.parent
-            self.data_dir = project_root / data_dir
-        else:
-            self.data_dir = Path(data_dir)
-            
-        # 使用绝对路径处理输出目录
-        if not os.path.isabs(output_dir):
-            project_root = Path(__file__).parent.parent
-            self.output_dir = project_root / output_dir
-        else:
-            self.output_dir = Path(output_dir)
+    def __init__(self):
+        # 硬编码数据目录和输出目录
+        self.data_dir = Path("D:/Source/torch/financial-intellgience/src/dataset")
+        self.output_dir = Path("D:/Source/torch/financial-intellgience/src/output")
             
         print(f"数据目录: {self.data_dir}")
         print(f"输出目录: {self.output_dir}")
@@ -80,11 +68,16 @@ class Pipeline:
         self.validator = DataValidator()
         self.optimizer = OptimizedBatchProcessor()
         
-        # Neo4j集成
-        self.enable_neo4j = enable_neo4j and NEO4J_INTEGRATION_AVAILABLE
+        # Neo4j集成 - 默认启用
+        self.enable_neo4j = NEO4J_INTEGRATION_AVAILABLE
         self.neo4j_manager: Optional[IntegrationManager] = None
         if self.enable_neo4j:
-            neo4j_config_obj = Config(**(neo4j_config or {}))
+            neo4j_config = {
+                'uri': 'bolt://localhost:7687',
+                'username': 'neo4j',
+                'password': '1234567kk'
+            }
+            neo4j_config_obj = Config(**neo4j_config)
             self.neo4j_manager = IntegrationManager(neo4j_config_obj)
             logger.info("Neo4j集成已启用")
         
@@ -627,14 +620,21 @@ class Pipeline:
             snapshot_dir = self.output_dir / "progress_snapshots"
             snapshot_dir.mkdir(exist_ok=True)
             
+            # 安全获取知识图谱数据，避免协程对象问题
+            kg = self.builder.knowledge_graph
+            # 如果knowledge_graph是协程对象，需要await
+            if asyncio.iscoroutine(kg):
+                logger.warning("检测到knowledge_graph是协程对象，正在等待其完成...")
+                kg = await kg
+            
             # 构建进度快照
             snapshot = {
                 'stage': stage,
                 'timestamp': timestamp,
                 'pipeline_stats': self.pipeline_stats.copy(),
                 'build_stats': self.builder.get_build_statistics(),
-                'entity_count': len(self.builder.knowledge_graph.get('companies', {})) + len(self.builder.knowledge_graph.get('investors', {})),
-                'relationship_count': len(self.builder.knowledge_graph.get('relationships', [])),
+                'entity_count': len(kg.get('companies', {})) + len(kg.get('investors', {})),
+                'relationship_count': len(kg.get('relationships', [])),
                 'llm_queue_size': len(await self._get_llm_queue_safe())
             }
             
@@ -855,16 +855,6 @@ class Pipeline:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='金融知识图谱构建工具')
-    parser.add_argument('--data-dir', type=str, default='D:/Source/torch/financial-intellgience/src/dataset', help='数据文件目录')
-    parser.add_argument('--output-dir', type=str, default='output', help='输出目录')
-    parser.add_argument('--enable-neo4j', action='store_true', help='启用Neo4j集成')
-    parser.add_argument('--neo4j-uri', type=str, help='Neo4j URI')
-    parser.add_argument('--neo4j-user', type=str, help='Neo4j用户名')
-    parser.add_argument('--neo4j-password', type=str, help='Neo4j密码')
-    parser.add_argument('--env-file', type=str, help='自定义.env文件路径')
-    parser.add_argument('--show-config', action='store_true', help='显示配置信息')
-    parser.add_argument("--no-intermediate", action="store_true", 
-                       help="不保存中间结果")
     parser.add_argument("--verbose", action="store_true", 
                        help="详细日志输出")
     
@@ -874,51 +864,29 @@ def main():
     print("金融知识图谱构建工具")
     print("="*60)
     
-    # 加载配置（如果指定了自定义env文件）
-    if args.env_file:
-        config_loaded = load_configuration(args.env_file)
-        if not config_loaded:
-            print(f"⚠️  加载自定义配置文件失败: {args.env_file}")
-            sys.exit(1)
-    
     # 显示配置信息
     config_manager = get_config_manager()
-    if args.show_config:
-        print("配置信息:")
-        config_status = config_manager.get_configuration_status()
-        print(f"  配置加载状态: {'✅ 已加载' if config_status['is_loaded'] else '❌ 未加载'}")
-        print(f"  提供商数量: {config_status['providers_count']}")
-        print(f"  有效配置: {'✅ 是' if config_status['has_valid_config'] else '❌ 否'}")
-        if config_status['provider_models']:
-            print(f"  可用模型: {', '.join(config_status['provider_models'])}")
-        if config_status['load_errors']:
-            print(f"  加载错误: {config_status['load_errors']}")
-        print()
+    print("配置信息:")
+    config_status = config_manager.get_configuration_status()
+    print(f"  配置加载状态: {'✅ 已加载' if config_status['is_loaded'] else '❌ 未加载'}")
+    print(f"  提供商数量: {config_status['providers_count']}")
+    print(f"  有效配置: {'✅ 是' if config_status['has_valid_config'] else '❌ 否'}")
+    if config_status['provider_models']:
+        print(f"  可用模型: {', '.join(config_status['provider_models'])}")
+    if config_status['load_errors']:
+        print(f"  加载错误: {config_status['load_errors']}")
+    print()
     
     # 设置日志级别
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    # 构建Neo4j配置
-    neo4j_config = None
-    if args.enable_neo4j:
-        neo4j_config = {
-            'uri': args.neo4j_uri or os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-            'username': args.neo4j_user or os.getenv('NEO4J_USERNAME', 'neo4j'),
-            'password': args.neo4j_password or os.getenv('NEO4J_PASSWORD', 'password')
-        }
-    
     # 创建流水线
-    pipeline = Pipeline(
-        data_dir=args.data_dir,
-        output_dir=args.output_dir,
-        enable_neo4j=args.enable_neo4j,
-        neo4j_config=neo4j_config
-    )
+    pipeline = Pipeline()
     
     # 运行完整的流水线（使用asyncio运行）
     async def run_pipeline():
-        return await pipeline.run_full_pipeline(save_intermediate=not args.no_intermediate)
+        return await pipeline.run_full_pipeline(save_intermediate=True)
     
     result = asyncio.run(run_pipeline())
     
@@ -939,7 +907,7 @@ def main():
         if result['llm_enhancement_required'] > 0:
             print(f"需要LLM增强: {result['llm_enhancement_required']} 个项目")
         
-        print(f"输出目录: {args.output_dir}")
+        print(f"输出目录: {pipeline.output_dir}")
         print("="*60)
         
     else:

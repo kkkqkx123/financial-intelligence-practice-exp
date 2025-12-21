@@ -150,10 +150,6 @@ class OpenAICompatibleClient(LLMClientInterface):
         }
         
         try:
-            logger.debug(f"发送请求到 {api_url}")
-            logger.debug(f"请求头: {headers}")
-            logger.debug(f"请求体: {json.dumps(payload, ensure_ascii=False)}")
-            
             data = json.dumps(payload).encode('utf-8')
             
             req = urllib.request.Request(

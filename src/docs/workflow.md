@@ -113,42 +113,61 @@
 ### 完整流程执行
 
 ```bash
-# 执行完整知识图谱构建流程（启用Neo4j集成）
-python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j
+# 切换到项目src目录
+cd d:/Source/torch/financial-intellgience/src
 
-# 指定Neo4j连接参数
-python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j --neo4j-uri bolt://localhost:7687 --neo4j-user neo4j --neo4j-password 1234567kk
+# 执行完整知识图谱构建流程（已硬编码路径和Neo4j配置）
+python main.py
 
-# 跳过Neo4j集成（仅生成知识图谱文件）
-python src/main.py --data-dir src/dataset --output-dir output
-
-# 显示详细日志和配置信息
-python src/main.py --data-dir src/dataset --output-dir output --enable-neo4j --verbose --show-config
-
-# 使用自定义环境配置文件
-python src/main.py --data-dir src/dataset --output-dir output --env-file .env.custom
-
-# 不保存中间结果（仅保存最终结果）
-python src/main.py --data-dir src/dataset --output-dir output --no-intermediate
+# 显示详细日志输出（推荐用于调试）
+python main.py --verbose
 
 # 使用run_main.py简化执行（推荐）
-python src/run_main.py
+python run_main.py
 ```
 
-### 命令行选项说明
+### 系统配置说明
 
-| 选项 | 说明 | 默认值 |
-|------|------|--------|
-| `--data-dir` | 数据文件目录 | `src/dataset` |
-| `--output-dir` | 输出目录 | `output` |
-| `--enable-neo4j` | 启用Neo4j集成 | 不启用 |
-| `--neo4j-uri` | Neo4j URI | `bolt://localhost:7687` |
-| `--neo4j-user` | Neo4j用户名 | `neo4j` |
-| `--neo4j-password` | Neo4j密码 | `password` |
-| `--env-file` | 自定义.env文件路径 | 使用默认.env |
-| `--show-config` | 显示配置信息 | 不显示 |
-| `--no-intermediate` | 不保存中间结果 | 保存中间结果 |
-| `--verbose` | 详细日志输出 | 标准日志输出 |
+系统已采用硬编码配置，无需命令行参数：
+
+| 配置项 | 硬编码值 | 说明 |
+|--------|----------|------|
+| 数据目录 | `D:/Source/torch/financial-intellgience/src/dataset` | 数据文件所在目录 |
+| 输出目录 | `D:/Source/torch/financial-intellgience/src/output` | 结果文件输出目录 |
+| Neo4j集成 | 默认启用 | 自动连接Neo4j数据库 |
+| Neo4j URI | `bolt://localhost:7687` | Neo4j数据库连接地址 |
+| Neo4j用户名 | `neo4j` | 数据库用户名 |
+| Neo4j密码 | `1234567kk` | 数据库密码 |
+
+### 日志系统
+
+系统使用统一的日志系统，基于`utils/logger.py`模块：
+
+#### 日志配置
+- **控制台输出**：彩色格式化日志，实时显示处理进度
+- **文件输出**：`output/pipeline.log`（UTF-8编码）
+- **日志级别**：INFO（可通过环境变量LOG_LEVEL调整）
+- **日志格式**：时间戳 - 日志器名称 - 级别 - 消息
+
+#### 调试信息输出规则
+- **LLM客户端**：每10个请求输出一次进度统计
+- **LLM处理器**：每10个批次输出一次处理统计
+- **Pipeline阶段**：每个阶段开始和结束时输出详细状态
+- **数据验证**：显示有效记录数量和验证结果
+
+#### 日志文件验证
+日志系统正常工作，能够正确创建日志文件并写入内容。测试验证：
+- ✓ 日志文件创建成功
+- ✓ 日志内容正确写入（INFO、WARNING、ERROR级别）
+- ✓ 文件编码为UTF-8，支持中文
+- ✓ 时间戳格式正确
+
+#### 日志级别说明
+- **DEBUG**：详细调试信息
+- **INFO**：一般处理信息（默认）
+- **WARNING**：警告信息
+- **ERROR**：错误信息
+- **CRITICAL**：严重错误信息
 
 ### Neo4j配置
 
